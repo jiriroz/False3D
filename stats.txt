@@ -1,0 +1,7 @@
+Stats over 3 experiments without glasses.
+
+face detections: 0.89
+face redetections: 0.55
+eye detections: 0.83
+eye redetections: 0.9
+
