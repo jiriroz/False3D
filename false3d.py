@@ -5,19 +5,21 @@ from collections import deque
 
 def main():
     tracking = EyeFaceTracking()
-    cap = cv2.VideoCapture(1)
+    cap = cv2.VideoCapture(0)
     frameCount = 0
 
     while True:
-        frame, gray = nextFrame(cap)
+        frameBGR, gray = nextFrame(cap)
         frameCount += 1
 
         if tracking.tracking:
-            tracking.track(gray)
+            #tracking.track(gray)
+            tracking.trackCamshift(frameBGR)
         if not tracking.tracking:
             tracking.detect(gray)
+        tracking.storeData(frameBGR)
 
-        displayFrame(frame, tracking)
+        displayFrame(frameBGR, tracking)
         if frameCount > 200:
             break
         if cv2.waitKey(1) & 0xFF == ord('q'):
@@ -44,9 +46,10 @@ def displayFrame(frame, tracking):
     cv2.imshow("Video", frame)
 
 def displayFeatures(frame, tracking):
-    for (ex,ey,ew,eh) in tracking.eyes:
-        cv2.rectangle(frame, (ex,ey), (ex+ew,ey+eh), (0,255,0), 2)
-    (fx,fy,fw,fh) = tracking.face
+    #for (ex,ey,ew,eh) in tracking.eyePositions:
+    #    cv2.rectangle(frame, (ex,ey), (ex+ew,ey+eh), (0,255,0), 2)
+    (fx,fy,fw,fh) = tracking.facePosition
+    #(fx, fy, fw, fh) = tracking.getSmoothedFace()
     cv2.rectangle(frame, (fx,fy), (fx+fw,fy+fh), (255,0,0), 2)
 
 """
@@ -57,15 +60,17 @@ class EyeFaceTracking:
         classifDir = "classifiers/"
         facecas = classifDir + "haarcascade_frontalface_default.xml"
         eyecas = classifDir + "haarcascade_eye.xml"
-        self.faceCascade = cv2.CascadeClassifier(facecas)
+        self.facePositionCascade = cv2.CascadeClassifier(facecas)
         self.eyeCascade = cv2.CascadeClassifier(eyecas)
         self.orb = cv2.ORB()
         self.matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
         self.tracking = False
-        self.eyes = [(0,0,0,0), (0,0,0,0)]
-        self.face = (0,0,0,0)
+        self.eyePositions = [(0,0,0,0), (0,0,0,0)]
+        self.facePosition = (0,0,0,0)
         self.smoothN = 2
-        self.faceHistory = deque()
+        #termination criteria of meanshift
+        self.termCrit = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 1)
+        self.facePositionHistory = deque()
         self.eyeHistory = deque()
         self.setupStats()
 
@@ -80,6 +85,15 @@ class EyeFaceTracking:
         self.successfulFaceRedetect = 0
 
     """
+    Store the detected features so that we can access them
+    in the next iteration.
+    """
+    def storeData(self, frame):
+        if self.tracking:
+            (fx,fy,fw,fh) = self.facePosition
+            self.face = frame[fy:fy+fh, fx:fx+fw]
+
+    """
     Detect eyes using haar cascade classifier.
     First detect face and within it search for eyes.
     """
@@ -92,24 +106,23 @@ class EyeFaceTracking:
             return
         self.successfulFaceDetect += 1
         (fx,fy,fw,fh) = faces[0]
-        self.face = faces[0]
+        self.facePosition = faces[0]
         self.updateFace(faces[0])
         ret, eyes = self.searchForEyes(gray[fy:fy+fh, fx:fx+fw])
         if not ret:
             self.tracking = False
             return
         eyes = map(lambda (ex,ey,ew,eh):(ex+fx,ey+fy,ew,eh), eyes)
-        self.eyes = eyes
+        self.eyePositions = eyes
         self.tracking = True
         self.successfulDetect += 1
 
     """
-    Detect eyes in a small region around the previous position using
-    haar cascades.
+    Detect eyes and face in a small region around the previous
+    position using haar cascades.
     """
     def track(self, gray):
-        newEyes = []
-        (fx, fy, fw, fh) = self.face
+        (fx, fy, fw, fh) = self.facePosition
         #search for the face in an area around the previous face
         xMargin = fw // 3
         yMargin = fh // 4
@@ -122,7 +135,7 @@ class EyeFaceTracking:
         self.successfulFaceRedetect += 1
         (newfx,newfy,fw,fh) = faces[0]
         fx, fy = newfx+fx-xMargin, newfy+fy-yMargin
-        self.face = (fx, fy, fw, fh)
+        self.facePosition = (fx, fy, fw, fh)
         ret, eyes = self.searchForEyes(gray[fy:fy+fh, fx:fx+fw])
         self.attemptedRedetect += 1
         if not ret:
@@ -130,10 +143,38 @@ class EyeFaceTracking:
             return
         self.successfulRedetect += 1
         eyes = map(lambda (ex,ey,ew,eh):(ex+fx,ey+fy,ew,eh), eyes)
-        self.eyes = eyes
+        self.eyePositions = eyes
+
+    """
+    Search for the face using histogram backprojection and camshift.
+    """
+    def trackCamshift(self, frame):
+        faceHsv = cv2.cvtColor(self.face, cv2.COLOR_BGR2HSV)
+        #could discard low values using cv2.inRange() function
+        dims = [0] #what components of hsv do we want to use?
+        histSizes = [180] #corresponding to hsv
+        ranges = [0, 180]
+        faceHist = cv2.calcHist([faceHsv], dims, None, histSizes, ranges)
+        cv2.normalize(faceHist, faceHist, 0, 255, cv2.NORM_MINMAX)
+
+        frameHsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+        backProj = cv2.calcBackProject([frameHsv], dims, faceHist, ranges, 1)
+        facePos = tuple(self.facePosition)
+        ret, newFacePos = cv2.meanShift(backProj, facePos, self.termCrit)
+
+        self.attemptedFaceRedetect += 1
+        if not ret:
+            self.tracking = False
+            return
+        self.successfulFaceRedetect += 1
+
+        self.facePosition = newFacePos
+        self.updateFace(newFacePos)
+
+
 
     def searchForFaces(self, roi, scaleF=1.3, minNeighbors=5):
-        faces = self.faceCascade.detectMultiScale(roi, scaleF, minNeighbors)
+        faces = self.facePositionCascade.detectMultiScale(roi, scaleF, minNeighbors)
         return len(faces) == 1, faces
 
     def searchForEyes(self, roi, scaleF=1.3, minNeighbors=5):
@@ -141,11 +182,11 @@ class EyeFaceTracking:
         return len(eyes) == 2, eyes
 
     def updateFace(self, face):
-        self.faceHistory.append(face)
+        self.facePositionHistory.append(face)
         #keep most recent face for fast access
-        self.face = face
-        if len(self.faceHistory) > self.smoothN:
-            self.faceHistory.popleft()
+        self.facePosition = face
+        if len(self.facePositionHistory) > self.smoothN:
+            self.facePositionHistory.popleft()
 
     def reportStats(self):
         eyeDetect = float(self.successfulDetect)/self.attemptedDetect
@@ -157,10 +198,14 @@ class EyeFaceTracking:
         print "eye detections: " + str(eyeDetect)
         print "eye redetections: " + str(eyeRedetect)
 
+    """
+    Get the average of several previous posisions of the face
+    to make the shift look smooth.
+    """
     def getSmoothedFace(self):
-        if len(self.faceHistory) == 0:
-            return self.face
-        return self.average(list(self.faceHistory))
+        if len(self.facePositionHistory) == 0:
+            return self.facePosition
+        return self.average(list(self.facePositionHistory))
 
     def getSmoothedEyes(self):
         return
