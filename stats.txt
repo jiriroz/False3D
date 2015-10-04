@@ -1,7 +1,7 @@
-Stats over 3 experiments without glasses.
+5 experiments with glasses
 
-face detections: 0.89
-face redetections: 0.55
-eye detections: 0.83
-eye redetections: 0.9
+Viola-Jones redetection:
+0.31
 
+Meanshift redetection:
+0.99

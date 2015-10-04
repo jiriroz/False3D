@@ -5,7 +5,7 @@ from collections import deque
 
 def main():
     tracking = EyeFaceTracking()
-    cap = cv2.VideoCapture(0)
+    cap = cv2.VideoCapture(1)
     frameCount = 0
 
     while True:
@@ -13,8 +13,7 @@ def main():
         frameCount += 1
 
         if tracking.tracking:
-            #tracking.track(gray)
-            tracking.trackCamshift(frameBGR)
+            tracking.trackCamshift(frameBGR, gray)
         if not tracking.tracking:
             tracking.detect(gray)
         tracking.storeData(frameBGR)
@@ -68,8 +67,9 @@ class EyeFaceTracking:
         self.eyePositions = [(0,0,0,0), (0,0,0,0)]
         self.facePosition = (0,0,0,0)
         self.smoothN = 2
-        #termination criteria of meanshift
-        self.termCrit = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 1)
+        #termination criteria for meanshift
+        self.maxIterations = 10
+        self.termCrit = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, self.maxIterations, 1)
         self.facePositionHistory = deque()
         self.eyeHistory = deque()
         self.setupStats()
@@ -118,24 +118,34 @@ class EyeFaceTracking:
         self.successfulDetect += 1
 
     """
-    Detect eyes and face in a small region around the previous
-    position using haar cascades.
+    Search for the face using histogram backprojection and camshift.
     """
-    def track(self, gray):
-        (fx, fy, fw, fh) = self.facePosition
-        #search for the face in an area around the previous face
-        xMargin = fw // 3
-        yMargin = fh // 4
-        roiFace = gray[fy-yMargin:fy+fh+yMargin, fx-xMargin:fx+fw+xMargin]
-        ret, faces = self.searchForFaces(roiFace)
+    def trackCamshift(self, frameBGR, gray):
+        faceHsv = cv2.cvtColor(self.face, cv2.COLOR_BGR2HSV)
+        mask = cv2.inRange(faceHsv, np.array((0., 60., 32.)), np.array((180.,255.,255.)))
+        dims = [0] #what components of hsv do we want to use?
+        histSizes = [180] #corresponding to hsv
+        ranges = [0, 180]
+        faceHist = cv2.calcHist([faceHsv], dims, mask, histSizes, ranges)
+        cv2.normalize(faceHist, faceHist, 0, 255, cv2.NORM_MINMAX)
+
+        frameHsv = cv2.cvtColor(frameBGR, cv2.COLOR_BGR2HSV)
+        backProj = cv2.calcBackProject([frameHsv], dims, faceHist, ranges, 1)
+        facePos = tuple(self.facePosition)
+        ret, newFacePos = cv2.meanShift(backProj, facePos, self.termCrit)
+
+        cv2.imshow("Back Projected", backProj)
+
         self.attemptedFaceRedetect += 1
-        if not ret:
+        if ret == self.maxIterations:
             self.tracking = False
             return
         self.successfulFaceRedetect += 1
-        (newfx,newfy,fw,fh) = faces[0]
-        fx, fy = newfx+fx-xMargin, newfy+fy-yMargin
-        self.facePosition = (fx, fy, fw, fh)
+
+        self.facePosition = newFacePos
+        self.updateFace(newFacePos)
+
+        """
         ret, eyes = self.searchForEyes(gray[fy:fy+fh, fx:fx+fw])
         self.attemptedRedetect += 1
         if not ret:
@@ -144,32 +154,8 @@ class EyeFaceTracking:
         self.successfulRedetect += 1
         eyes = map(lambda (ex,ey,ew,eh):(ex+fx,ey+fy,ew,eh), eyes)
         self.eyePositions = eyes
+        """
 
-    """
-    Search for the face using histogram backprojection and camshift.
-    """
-    def trackCamshift(self, frame):
-        faceHsv = cv2.cvtColor(self.face, cv2.COLOR_BGR2HSV)
-        #could discard low values using cv2.inRange() function
-        dims = [0] #what components of hsv do we want to use?
-        histSizes = [180] #corresponding to hsv
-        ranges = [0, 180]
-        faceHist = cv2.calcHist([faceHsv], dims, None, histSizes, ranges)
-        cv2.normalize(faceHist, faceHist, 0, 255, cv2.NORM_MINMAX)
-
-        frameHsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-        backProj = cv2.calcBackProject([frameHsv], dims, faceHist, ranges, 1)
-        facePos = tuple(self.facePosition)
-        ret, newFacePos = cv2.meanShift(backProj, facePos, self.termCrit)
-
-        self.attemptedFaceRedetect += 1
-        if not ret:
-            self.tracking = False
-            return
-        self.successfulFaceRedetect += 1
-
-        self.facePosition = newFacePos
-        self.updateFace(newFacePos)
 
 
 
