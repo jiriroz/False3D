@@ -6,6 +6,7 @@ from collections import deque
 class False3D:
     def run(self):
         self.tracker = EyeFaceTracker(eyeMode = True, smoothMode = False)
+        self.displayer = ObjectDisplayer()
         try:
             cap = cv2.VideoCapture(1)
         except Exception:
@@ -22,6 +23,7 @@ class False3D:
                 self.tracker.detect(gray)
             self.tracker.storeData(frameBGR)
             self.tracker.computePerspective()
+            self.displayer.computeAndDisplayAngle(self.tracker.perspective, frameBGR)
     
             self.displayFrame(frameBGR)
             if frameCount > 200:
@@ -245,8 +247,33 @@ class EyeFaceTracker:
         array = np.array(tuples, dtype=np.float64)
         mean = np.mean(array, 0).astype(np.int32)
         return tuple(mean)
-            
 
+"""
+This class will display and rotate 3D projection of an image
+based on the perspective.
+Change the name to something less stupid.
+"""
+class ObjectDisplayer:
+    def __init__(self):
+        self.angleMarkerPos = (400, 100)
+        self.perspective = (0, 0)
+
+    def computeAndDisplayAngle(self, perspective, frame):
+        self.perspective = perspective
+        self.displayAngleX(frame)
+        self.displayAngleY(frame)
+
+    def computeAngleX(self):
+        pass
+
+    def computeAngleY(self):
+        pass
+    
+    def displayAngleX(self, frame):
+        pass
+
+    def displayAngleY(self, frame):
+        pass
 
 if __name__ == "__main__":
     false3D = False3D()
