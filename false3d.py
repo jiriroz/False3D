@@ -3,54 +3,61 @@ import numpy as np
 import matplotlib.pyplot as plt
 from collections import deque
 
-def main():
-    tracking = EyeFaceTracker(eyeMode = False)
-    cap = cv2.VideoCapture(1)
-    frameCount = 0
+class False3D:
+    def run(self):
+        self.tracker = EyeFaceTracker(eyeMode = True, smoothMode = False)
+        try:
+            cap = cv2.VideoCapture(1)
+        except Exception:
+            cap = cv2.VideoCapture(0)
+        frameCount = 0
 
-    while True:
-        frameBGR, gray = nextFrame(cap)
-        frameCount += 1
+        while True:
+            frameBGR, gray = self.nextFrame(cap)
+            frameCount += 1
+    
+            if self.tracker.isTracking:
+                self.tracker.trackMeanShift(frameBGR, gray)
+            if not self.tracker.isTracking:
+                self.tracker.detect(gray)
+            self.tracker.storeData(frameBGR)
+            self.tracker.computePerspective()
+    
+            self.displayFrame(frameBGR)
+            if frameCount > 200:
+                break
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
 
-        if tracking.isTracking:
-            tracking.trackMeanShift(frameBGR, gray)
-        if not tracking.isTracking:
-            tracking.detect(gray)
-        tracking.storeData(frameBGR)
+        #self.tracker.reportStats()
+        cap.release()
+        cv2.destroyAllWindows()
 
-        displayFrame(frameBGR, tracking)
-        if frameCount > 400:
-            break
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
-
-    tracking.reportStats()
-    cap.release()
-    cv2.destroyAllWindows()
-
-"""
-Capture and parse a frame from the webcam.
-"""
-def nextFrame(cap):
-    ret, frame = cap.read()
-    frame = cv2.flip(frame, 1)
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    return frame, gray
-
-"""
-Display frame and everything it is supposed to display.
-"""
-def displayFrame(frame, tracking):
-    displayFeatures(frame, tracking)
-    cv2.imshow("Video", frame)
-
-def displayFeatures(frame, tracking):
-    if tracking.eyeMode:
-        for (ex,ey,ew,eh) in tracking.eyePositions:
-            cv2.rectangle(frame, (ex,ey), (ex+ew,ey+eh), (0,255,0), 2)
-    (fx,fy,fw,fh) = tracking.facePosition
-    #(fx, fy, fw, fh) = tracking.getSmoothedFace()
-    cv2.rectangle(frame, (fx,fy), (fx+fw,fy+fh), (255,0,0), 2)
+    """
+    Capture and parse a frame from the webcam.
+    """
+    def nextFrame(self, cap):
+        ret, frame = cap.read()
+        frame = cv2.flip(frame, 1)
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        return frame, gray
+    
+    """
+    Display frame and everything it is supposed to display.
+    """
+    def displayFrame(self, frame):
+        self.displayFeatures(frame)
+        cv2.imshow("Video", frame)
+    
+    def displayFeatures(self, frame):
+        (fx,fy,fw,fh) = self.tracker.facePosition
+        if self.tracker.smoothMode:
+            (fx,fy,fw,fh) = self.tracker.getSmoothedFace()
+        cv2.rectangle(frame, (fx,fy), (fx+fw,fy+fh), (255,0,0), 2)
+        if self.tracker.eyeMode:
+            for (ex,ey,ew,eh) in self.tracker.eyePositions:
+                cv2.rectangle(frame, (ex,ey), (ex+ew,ey+eh), (0,255,0), 2)
+        cv2.circle(frame, self.tracker.perspective, 5, (0,0,255), thickness=-1)
 
 """
 Class performing feature detection and tracking.
@@ -61,9 +68,10 @@ class EyeFaceTracker:
     property variables.
     @param eyeMode boolean determining whether we should track eyes
     """
-    def __init__(self, eyeMode):
+    def __init__(self, eyeMode=False, smoothMode=False):
         #denotes whether we should track eyes or not
         self.eyeMode = eyeMode
+        self.smoothMode = smoothMode
         classifDir = "classifiers/"
         facecas = classifDir + "haarcascade_frontalface_default.xml"
         eyecas = classifDir + "haarcascade_eye.xml"
@@ -74,6 +82,7 @@ class EyeFaceTracker:
         self.isTracking = False
         self.eyePositions = [(0,0,0,0), (0,0,0,0)]
         self.facePosition = (0,0,0,0)
+        self.perspective = (0,0)
         self.smoothN = 2
         #termination criteria for meanshift
         self.maxIterations = 10
@@ -102,29 +111,40 @@ class EyeFaceTracker:
             self.face = frame[fy:fy+fh, fx:fx+fw]
 
     """
-    Detect face and eyes using haar cascade classifier.
+    Detect features using haar cascade classifier.
     First detect face and within it search for eyes.
     """
     def detect(self, gray):
-        self.attemptedEyeDetect += 1
+        ret, face = self.detectFace(gray)
+        if not ret:
+            self.isTracking = False
+            return
+        self.isTracking = True
+        if self.eyeMode:
+            self.detectEyes(gray, face)
+
+    def detectFace(self, gray):
         self.attemptedFaceDetect += 1
         ret, faces = self.searchForFaces(gray)
         if not ret:
-            self.isTracking = False
-            return
+            return False, None
         self.successfulFaceDetect += 1
-        (fx,fy,fw,fh) = faces[0]
-        self.facePosition = faces[0]
-        self.updateFace(faces[0])
+        face = faces[0]
+        self.facePosition = face
+        self.updateFace(face)
+        return True, face
+
+    def detectEyes(self, gray, face):
+        (fx,fy,fw,fh) = face
+        self.attemptedEyeDetect += 1
         ret, eyes = self.searchForEyes(gray[fy:fy+fh, fx:fx+fw])
         if not ret:
-            self.isTracking = False
+            self.eyePositions = [(0,0,0,0), (0,0,0,0)]
             return
         eyes = map(lambda (ex,ey,ew,eh):(ex+fx,ey+fy,ew,eh), eyes)
         self.eyePositions = eyes
-        self.isTracking = True
         self.successfulEyeDetect += 1
-
+        
     """
     Search for the face using histogram backprojection and meanshift/camshift.
     """
@@ -143,11 +163,12 @@ class EyeFaceTracker:
         facePos = tuple(self.facePosition)
         ret, newFacePos = cv2.meanShift(backProj, facePos, self.termCrit)
 
-        cv2.imshow("Back Projected", backProj)
+        #cv2.imshow("Back Projected", backProj)
 
         self.attemptedFaceRedetect += 1
         if ret == self.maxIterations:
             self.isTracking = False
+            self.facePosition = (0,0,0,0)
             return
         self.successfulFaceRedetect += 1
 
@@ -157,7 +178,8 @@ class EyeFaceTracker:
         if self.eyeMode:
             self.trackEyes(gray)
 
-    def trackEyes(self):
+    def trackEyes(self, gray):
+        (fx,fy,fw,fh) = self.facePosition
         ret, eyes = self.searchForEyes(gray[fy:fy+fh, fx:fx+fw])
         self.attemptedEyeRedetect += 1
         if not ret:
@@ -187,15 +209,24 @@ class EyeFaceTracker:
         if len(self.facePositionHistory) > self.smoothN:
             self.facePositionHistory.popleft()
 
+    """
+    Compute the approximate point of perspective.
+    It will be exactly between the two eyes.
+    """
+    def computePerspective(self):
+        (fx,fy,fw,fh) = self.facePosition
+        self.perspective = (fx + fw/2, fy + fh/2)
+
     def reportStats(self):
-        eyeDetect = float(self.successfulEyeDetect)/self.attemptedEyeDetect
-        eyeRedetect = float(self.successfulEyeRedetect)/(self.attemptedEyeRedetect + 0.01)
         faceDetect = float(self.successfulFaceDetect)/self.attemptedFaceDetect
         faceRedetect = float(self.successfulFaceRedetect)/(self.attemptedFaceRedetect + 0.01)
         print ("face detections: " + str(faceDetect))
         print ("face redetections: " + str(faceRedetect))
-        print ("eye detections: " + str(eyeDetect))
-        print ("eye redetections: " + str(eyeRedetect))
+        if self.eyeMode:
+            eyeDetect = float(self.successfulEyeDetect)/self.attemptedEyeDetect
+            eyeRedetect = float(self.successfulEyeRedetect)/self.attemptedEyeRedetect
+            print ("eye detections: " + str(eyeDetect))
+            print ("eye redetections: " + str(eyeRedetect))
 
     """
     Get the average of several previous posisions of the face
@@ -218,5 +249,6 @@ class EyeFaceTracker:
 
 
 if __name__ == "__main__":
-    main()
+    false3D = False3D()
+    false3D.run()
 
