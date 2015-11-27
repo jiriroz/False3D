@@ -4,13 +4,10 @@ import matplotlib.pyplot as plt
 from collections import deque
 
 class False3D:
-    def run(self):
+    def run(self, camera):
         self.tracker = EyeFaceTracker(eyeMode = True, smoothMode = False)
         self.displayer = ObjectDisplayer()
-        try:
-            cap = cv2.VideoCapture(1)
-        except Exception:
-            cap = cv2.VideoCapture(0)
+        cap = cv2.VideoCapture(camera)
         frameCount = 0
 
         while True:
@@ -255,13 +252,23 @@ Change the name to something less stupid.
 """
 class ObjectDisplayer:
     def __init__(self):
-        self.angleMarkerPos = (400, 100)
+        self.angleMarkerPos = np.array([400, 30])
         self.perspective = (0, 0)
+        self.xMarkerOrigin = np.array([50, 0]) + self.angleMarkerPos
+        self.yMarkerOrigin = np.array([130, 40]) + self.angleMarkerPos
+        self.markerLength = 60.0
+        self.innerMarkerRatio = 0.7
+        self.fieldX = 90.0
+        self.fieldY = 90.0
+        self.disp = False
+        self.angleX = -30.0
+        self.angleY = -30.0
 
     def computeAndDisplayAngle(self, perspective, frame):
         self.perspective = perspective
-        self.displayAngleX(frame)
-        self.displayAngleY(frame)
+        self.computeAngleX()
+        self.computeAngleY()
+        self.displayMarkers(frame)
 
     def computeAngleX(self):
         pass
@@ -269,13 +276,43 @@ class ObjectDisplayer:
     def computeAngleY(self):
         pass
     
-    def displayAngleX(self, frame):
-        pass
+    def displayMarkers(self, frame):
+        #horizontal displayer
+        endPoint = np.array([0, self.markerLength])
+        endPointRight = np.dot(endPoint, cv2.getRotationMatrix2D((2,2), -self.fieldX/2, 1))[:2] + self.xMarkerOrigin
+        endPointLeft = np.dot(endPoint, cv2.getRotationMatrix2D((2,2), self.fieldX/2, 1))[:2] + self.xMarkerOrigin
+        endPoint += self.xMarkerOrigin
+        origin = tuple(self.xMarkerOrigin.astype(np.int32))
+        left = tuple(endPointLeft.astype(np.int32))
+        right = tuple(endPointRight.astype(np.int32))
+        cv2.line(frame, origin, left, (50,50,50), 2)
+        cv2.line(frame, origin, right, (50,50,50), 2)
+        markerEnd = np.array([0, self.markerLength * self.innerMarkerRatio])
+        markerEnd = np.dot(markerEnd, cv2.getRotationMatrix2D((2,2), -self.angleX/2, 1))[:2]
+        down = tuple((markerEnd + self.xMarkerOrigin).astype(np.int32))
+        cv2.line(frame, origin, down, (50,50,50), 2)
 
-    def displayAngleY(self, frame):
-        pass
+        #vertical displayer
+        endPoint = np.array([self.markerLength, 0]) 
+        endPointRight = np.dot(endPoint, cv2.getRotationMatrix2D((2,2), -self.fieldX/2, 1))[:2] + self.yMarkerOrigin
+        endPointLeft = np.dot(endPoint, cv2.getRotationMatrix2D((2,2), self.fieldX/2, 1))[:2] + self.yMarkerOrigin
+        endPoint += self.yMarkerOrigin
+        origin = tuple(self.yMarkerOrigin.astype(np.int32))
+        left = tuple(endPointLeft.astype(np.int32))
+        right = tuple(endPointRight.astype(np.int32))
+        cv2.line(frame, origin, left, (50,50,50), 2)
+        cv2.line(frame, origin, right, (50,50,50), 2)
+        markerEnd = np.array([self.markerLength * self.innerMarkerRatio, 0])
+        markerEnd = np.dot(markerEnd, cv2.getRotationMatrix2D((2,2), self.angleY/2, 1))[:2]
+        down = tuple((markerEnd + self.yMarkerOrigin).astype(np.int32))
+        cv2.line(frame, origin, down, (50,50,50), 2)
 
+
+        
 if __name__ == "__main__":
+    try:
+        camera = int(sys.argv[1])
+    except Exception:
+        camera = 0
     false3D = False3D()
-    false3D.run()
-
+    false3D.run(camera)
