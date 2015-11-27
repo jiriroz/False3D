@@ -13,7 +13,6 @@ class False3D:
         while True:
             frameBGR, gray = self.nextFrame(cap)
             frameCount += 1
-    
             if self.tracker.isTracking:
                 self.tracker.trackMeanShift(frameBGR, gray)
             if not self.tracker.isTracking:
@@ -23,7 +22,7 @@ class False3D:
             self.displayer.computeAndDisplayAngle(self.tracker.perspective, frameBGR)
     
             self.displayFrame(frameBGR)
-            if frameCount > 200:
+            if frameCount > 400:
                 break
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
@@ -144,9 +143,8 @@ class EyeFaceTracker:
         self.eyePositions = eyes
         self.successfulEyeDetect += 1
         
-    """
-    Search for the face using histogram backprojection and meanshift/camshift.
-    """
+    """Search for the face using histogram backprojection and
+    meanshift/camshift."""
     def trackMeanShift(self, frameBGR, gray):
         faceHsv = cv2.cvtColor(self.face, cv2.COLOR_BGR2HSV)
         mask = cv2.inRange(faceHsv, np.array((0., 60., 32.)), np.array((180.,255.,255.)))
@@ -171,22 +169,45 @@ class EyeFaceTracker:
             return
         self.successfulFaceRedetect += 1
 
-        self.facePosition = newFacePos
         self.updateFace(newFacePos)
 
         if self.eyeMode:
             self.trackEyes(gray)
 
+    """Track eyes using viola jones"""
     def trackEyes(self, gray):
         (fx,fy,fw,fh) = self.facePosition
         ret, eyes = self.searchForEyes(gray[fy:fy+fh, fx:fx+fw])
         self.attemptedEyeRedetect += 1
         if not ret:
-        #    self.isTracking = False
             return
         self.successfulEyeRedetect += 1
         eyes = map(lambda (ex,ey,ew,eh):(ex+fx,ey+fy,ew,eh), eyes)
         self.eyePositions = eyes
+
+    """Track one eye using meanshift"""
+    def trackEyeMeanShift(self, frameBGR, gray):
+        eyeHsv = cv2.cvtColor(eye, cv2.COLOR_BGR2HSV)
+        mask = cv2.inRange(eyeHsv, np.array((0., 60., 32.)), np.array((180.,255.,255.)))
+        dims = [0] #what components of hsv do we want to use?
+        histSizes = [180] #corresponding to hsv
+        ranges = [0, 180]
+        eyeHist = cv2.calcHist([eyeHsv], dims, mask, histSizes, ranges)
+        eyeHist = cv2.GaussianBlur(eyeHist, (13,13), 5)
+        cv2.normalize(eyeHist, eyeHist, 0, 255, cv2.NORM_MINMAX)
+        frameHsv = cv2.cvtColor(frameBGR, cv2.COLOR_BGR2HSV)
+        backProj = cv2.calcBackProject([frameHsv], dims, eyeHist, ranges, 1)
+        eyePos = tuple(eyePosition)
+        ret, newPos = cv2.meanShift(backProj, eyePos, self.termCrit)
+        #cv2.imshow("Back Projected", backProj)
+
+        if ret == self.maxIterations:
+            #self.isTracking = False
+            self.eyePosition = (0,0,0,0)
+            return
+        self.eyePosition = newEyePos
+        #self.updateEye(newEyePos)
+
 
     def searchForFaces(self, roi, scaleF=1.3, minNeighbors=5):
         faces = self.facePositionCascade.detectMultiScale(roi, scaleF, minNeighbors)
@@ -253,60 +274,56 @@ Change the name to something less stupid.
 class ObjectDisplayer:
     def __init__(self):
         self.angleMarkerPos = np.array([400, 30])
-        self.perspective = (0, 0)
+        self.pointOfView = (0, 0)
         self.xMarkerOrigin = np.array([50, 0]) + self.angleMarkerPos
         self.yMarkerOrigin = np.array([130, 40]) + self.angleMarkerPos
         self.markerLength = 60.0
         self.innerMarkerRatio = 0.7
-        self.fieldX = 90.0
-        self.fieldY = 90.0
+        self.fieldX = 120.0
+        self.fieldY = 90.0 #both twice the actual (presumed) value
         self.disp = False
-        self.angleX = -30.0
-        self.angleY = -30.0
+        self.angleX = 0.0
+        self.angleY = 0.0
+        self.frameDims = None
 
-    def computeAndDisplayAngle(self, perspective, frame):
-        self.perspective = perspective
-        self.computeAngleX()
-        self.computeAngleY()
-        self.displayMarkers(frame)
+    def computeAndDisplayAngle(self, pointOfView, frame):
+        if self.frameDims == None:
+            self.frameDims = frame.shape[:2][::-1]
+        self.pointOfView = pointOfView
+        self.computeAngle()
+        self.displayMarker(frame, horiz = True)
+        self.displayMarker(frame, horiz = False)
 
-    def computeAngleX(self):
-        pass
+    def computeAngle(self):
+        x, y = self.pointOfView[0], self.pointOfView[1]
+        width, height = self.frameDims[0], self.frameDims[1]
+        self.angleX = (float(x)/width - 0.5) * self.fieldX
+        self.angleY = (float(y)/height - 0.5) * self.fieldY
 
-    def computeAngleY(self):
-        pass
-    
-    def displayMarkers(self, frame):
-        #horizontal displayer
-        endPoint = np.array([0, self.markerLength])
-        endPointRight = np.dot(endPoint, cv2.getRotationMatrix2D((2,2), -self.fieldX/2, 1))[:2] + self.xMarkerOrigin
-        endPointLeft = np.dot(endPoint, cv2.getRotationMatrix2D((2,2), self.fieldX/2, 1))[:2] + self.xMarkerOrigin
-        endPoint += self.xMarkerOrigin
-        origin = tuple(self.xMarkerOrigin.astype(np.int32))
+    def displayMarker(self, frame, horiz=True):
+        if horiz:
+            direction = np.array([0, self.markerLength])
+            angle = -self.angleX
+            origin = self.xMarkerOrigin
+            field = self.fieldX
+        else:
+            direction = np.array([self.markerLength, 0])
+            angle = self.angleY
+            origin = self.yMarkerOrigin
+            field = self.fieldY
+        endPointRight = np.dot(direction, cv2.getRotationMatrix2D((2,2), -field/2, 1))[:2] + origin
+        endPointLeft = np.dot(direction, cv2.getRotationMatrix2D((2,2), field/2, 1))[:2] + origin
+        endPointTransl = direction + origin
+        origin = tuple(origin.astype(np.int32))
         left = tuple(endPointLeft.astype(np.int32))
         right = tuple(endPointRight.astype(np.int32))
         cv2.line(frame, origin, left, (50,50,50), 2)
         cv2.line(frame, origin, right, (50,50,50), 2)
-        markerEnd = np.array([0, self.markerLength * self.innerMarkerRatio])
-        markerEnd = np.dot(markerEnd, cv2.getRotationMatrix2D((2,2), -self.angleX/2, 1))[:2]
-        down = tuple((markerEnd + self.xMarkerOrigin).astype(np.int32))
-        cv2.line(frame, origin, down, (50,50,50), 2)
-
-        #vertical displayer
-        endPoint = np.array([self.markerLength, 0]) 
-        endPointRight = np.dot(endPoint, cv2.getRotationMatrix2D((2,2), -self.fieldX/2, 1))[:2] + self.yMarkerOrigin
-        endPointLeft = np.dot(endPoint, cv2.getRotationMatrix2D((2,2), self.fieldX/2, 1))[:2] + self.yMarkerOrigin
-        endPoint += self.yMarkerOrigin
-        origin = tuple(self.yMarkerOrigin.astype(np.int32))
-        left = tuple(endPointLeft.astype(np.int32))
-        right = tuple(endPointRight.astype(np.int32))
-        cv2.line(frame, origin, left, (50,50,50), 2)
-        cv2.line(frame, origin, right, (50,50,50), 2)
-        markerEnd = np.array([self.markerLength * self.innerMarkerRatio, 0])
-        markerEnd = np.dot(markerEnd, cv2.getRotationMatrix2D((2,2), self.angleY/2, 1))[:2]
-        down = tuple((markerEnd + self.yMarkerOrigin).astype(np.int32))
-        cv2.line(frame, origin, down, (50,50,50), 2)
-
+        markerEnd = direction * self.innerMarkerRatio
+        markerEnd = np.dot(markerEnd, cv2.getRotationMatrix2D((2,2), angle/2, 1))[:2]
+        arrowEnd = tuple((markerEnd + origin).astype(np.int32))
+        cv2.line(frame, origin, arrowEnd, (50,50,50), 2)
+        cv2.circle(frame, arrowEnd, 4, (50,50,50), thickness=-1)
 
         
 if __name__ == "__main__":
