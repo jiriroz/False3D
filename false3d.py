@@ -13,21 +13,17 @@ class False3D:
         while True:
             frameBGR, gray = self.nextFrame(cap)
             frameCount += 1
-            if self.tracker.isTracking:
-                self.tracker.trackMeanShift(frameBGR, gray)
-            if not self.tracker.isTracking:
-                self.tracker.detect(gray)
+            self.tracker.track(frameBGR, gray)
             self.tracker.storeData(frameBGR)
             self.tracker.computePerspective()
             self.displayer.computeAndDisplayAngle(self.tracker.perspective, frameBGR)
     
             self.displayFrame(frameBGR)
-            if frameCount > 400:
+            if frameCount > 200:
                 break
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
 
-        #self.tracker.reportStats()
         cap.release()
         cv2.destroyAllWindows()
 
@@ -77,80 +73,60 @@ class EyeFaceTracker:
         self.eyeCascade = cv2.CascadeClassifier(eyecas)
         self.orb = cv2.ORB()
         self.matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
-        self.isTracking = False
+        self.isTrackingFace = False
+        self.isTrackingEyes = False
         self.eyePositions = [(0,0,0,0), (0,0,0,0)]
         self.facePosition = (0,0,0,0)
         self.perspective = (0,0)
+        self.face = None
+        self.eyes = [None, None]
         self.smoothN = 2
         #termination criteria for meanshift
         self.maxIterations = 10
         self.termCrit = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, self.maxIterations, 1)
         self.facePositionHistory = deque()
         self.eyeHistory = deque()
-        self.setupStats()
 
-    def setupStats(self):
-        self.attemptedEyeDetect = 0
-        self.successfulEyeDetect = 0
-        self.attemptedEyeRedetect = 0
-        self.successfulEyeRedetect = 0
-        self.attemptedFaceDetect = 0
-        self.successfulFaceDetect = 0
-        self.attemptedFaceRedetect = 0
-        self.successfulFaceRedetect = 0
+    """Search for and track face and eyes."""
+    def track(self, frameBGR, gray):
+        if self.isTrackingFace:
+            self.isTrackingFace = self.trackFace(frameBGR)
+        if not self.isTrackingFace:
+            self.isTrackingFace = self.detectFace(gray)
 
-    """
-    Store the detected features so that we can access them
-    in the next iteration.
-    """
-    def storeData(self, frame):
-        if self.isTracking:
-            (fx,fy,fw,fh) = self.facePosition
-            self.face = frame[fy:fy+fh, fx:fx+fw]
-
-    """
-    Detect features using haar cascade classifier.
-    First detect face and within it search for eyes.
-    """
-    def detect(self, gray):
-        ret, face = self.detectFace(gray)
-        if not ret:
-            self.isTracking = False
-            return
-        self.isTracking = True
-        if self.eyeMode:
-            self.detectEyes(gray, face)
+        if self.eyeMode and not self.isTrackingEyes and self.isTrackingFace:
+            self.isTrackingEyes = self.detectEyes(gray)
+        elif self.eyeMode and self.isTrackingEyes:
+            self.isTrackingEyes = self.trackEyes(frameBGR, gray)
 
     def detectFace(self, gray):
-        self.attemptedFaceDetect += 1
         ret, faces = self.searchForFaces(gray)
         if not ret:
-            return False, None
-        self.successfulFaceDetect += 1
+            return False
         face = faces[0]
-        self.facePosition = face
         self.updateFace(face)
-        return True, face
+        return True
 
-    def detectEyes(self, gray, face):
-        (fx,fy,fw,fh) = face
-        self.attemptedEyeDetect += 1
+    def detectEyes(self, gray):
+        (fx,fy,fw,fh) = self.facePosition
         ret, eyes = self.searchForEyes(gray[fy:fy+fh, fx:fx+fw])
         if not ret:
-            self.eyePositions = [(0,0,0,0), (0,0,0,0)]
-            return
+            dx, dy = self.xShift, self.yShift
+            eyes = self.eyePositions
+            eyes = map(lambda (ex,ey,ew,eh):(ex+dx,ey+dy,ew,eh), eyes)
+            self.eyePositions = eyes
+            return False
+
         eyes = map(lambda (ex,ey,ew,eh):(ex+fx,ey+fy,ew,eh), eyes)
         self.eyePositions = eyes
-        self.successfulEyeDetect += 1
+        return True
         
-    """Search for the face using histogram backprojection and
-    meanshift/camshift."""
-    def trackMeanShift(self, frameBGR, gray):
+    """Track face using meanshift."""
+    def trackFace(self, frameBGR):
         faceHsv = cv2.cvtColor(self.face, cv2.COLOR_BGR2HSV)
         mask = cv2.inRange(faceHsv, np.array((0., 60., 32.)), np.array((180.,255.,255.)))
-        dims = [0] #what components of hsv do we want to use?
-        histSizes = [180] #corresponding to hsv
-        ranges = [0, 180]
+        #dims: Components of HSV, histSizes: corresponding to HSV
+        dims, histSizes, ranges = [0], [180], [0, 180]
         faceHist = cv2.calcHist([faceHsv], dims, mask, histSizes, ranges)
         faceHist = cv2.GaussianBlur(faceHist, (13,13), 5)
         cv2.normalize(faceHist, faceHist, 0, 255, cv2.NORM_MINMAX)
@@ -160,54 +136,25 @@ class EyeFaceTracker:
         facePos = tuple(self.facePosition)
         ret, newFacePos = cv2.meanShift(backProj, facePos, self.termCrit)
 
-        #cv2.imshow("Back Projected", backProj)
-
-        self.attemptedFaceRedetect += 1
         if ret == self.maxIterations:
-            self.isTracking = False
-            self.facePosition = (0,0,0,0)
-            return
-        self.successfulFaceRedetect += 1
-
+            self.updateFace((0,0,0,0))
+            return False
         self.updateFace(newFacePos)
-
-        if self.eyeMode:
-            self.trackEyes(gray)
+        return True
 
     """Track eyes using viola jones"""
-    def trackEyes(self, gray):
+    def trackEyes(self, frame, gray):
         (fx,fy,fw,fh) = self.facePosition
         ret, eyes = self.searchForEyes(gray[fy:fy+fh, fx:fx+fw])
-        self.attemptedEyeRedetect += 1
         if not ret:
-            return
-        self.successfulEyeRedetect += 1
+            dx, dy = self.xShift, self.yShift
+            eyes = self.eyePositions
+            eyes = map(lambda (ex,ey,ew,eh):(ex+dx,ey+dy,ew,eh), eyes)
+            self.eyePositions = eyes
+            return False
         eyes = map(lambda (ex,ey,ew,eh):(ex+fx,ey+fy,ew,eh), eyes)
         self.eyePositions = eyes
-
-    """Track one eye using meanshift"""
-    def trackEyeMeanShift(self, frameBGR, gray):
-        eyeHsv = cv2.cvtColor(eye, cv2.COLOR_BGR2HSV)
-        mask = cv2.inRange(eyeHsv, np.array((0., 60., 32.)), np.array((180.,255.,255.)))
-        dims = [0] #what components of hsv do we want to use?
-        histSizes = [180] #corresponding to hsv
-        ranges = [0, 180]
-        eyeHist = cv2.calcHist([eyeHsv], dims, mask, histSizes, ranges)
-        eyeHist = cv2.GaussianBlur(eyeHist, (13,13), 5)
-        cv2.normalize(eyeHist, eyeHist, 0, 255, cv2.NORM_MINMAX)
-        frameHsv = cv2.cvtColor(frameBGR, cv2.COLOR_BGR2HSV)
-        backProj = cv2.calcBackProject([frameHsv], dims, eyeHist, ranges, 1)
-        eyePos = tuple(eyePosition)
-        ret, newPos = cv2.meanShift(backProj, eyePos, self.termCrit)
-        #cv2.imshow("Back Projected", backProj)
-
-        if ret == self.maxIterations:
-            #self.isTracking = False
-            self.eyePosition = (0,0,0,0)
-            return
-        self.eyePosition = newEyePos
-        #self.updateEye(newEyePos)
-
+        return True
 
     def searchForFaces(self, roi, scaleF=1.3, minNeighbors=5):
         faces = self.facePositionCascade.detectMultiScale(roi, scaleF, minNeighbors)
@@ -215,7 +162,27 @@ class EyeFaceTracker:
 
     def searchForEyes(self, roi, scaleF=1.3, minNeighbors=5):
         eyes = self.eyeCascade.detectMultiScale(roi, scaleF, minNeighbors)
-        return len(eyes) == 2, eyes
+        if len(eyes) != 2:
+            return False, None
+        return self.validateEyes(eyes), eyes
+
+    def validateEyes(self, eyes):
+        area1 = eyes[0][2] * eyes[0][3]
+        area2 = eyes[1][2] * eyes[1][3]
+        return area1 > 800 and area2 > 800 and area1 < 6000 and area2 < 6000
+
+    """
+    Store the detected features so that we can access them
+    in the next iteration.
+    """
+    def storeData(self, frame):
+        if self.isTrackingFace:
+            (fx,fy,fw,fh) = self.facePosition
+            self.face = frame[fy:fy+fh, fx:fx+fw]
+        if self.isTrackingEyes:
+            for i in range(len(self.eyePositions)):
+                (ex,ey,ew,eh) = self.eyePositions[i]
+                self.eyes[i] = frame[ey:ey+eh, ex:ex+ew]
 
     """
     Store the current face. Also, as an experimental feature, keep a queue
@@ -223,7 +190,8 @@ class EyeFaceTracker:
     """
     def updateFace(self, face):
         self.facePositionHistory.append(face)
-        #keep most recent face for fast access
+        self.xShift = face[0] - self.facePosition[0]
+        self.yShift = face[1] - self.facePosition[1]
         self.facePosition = face
         #make space for next face
         if len(self.facePositionHistory) > self.smoothN:
@@ -234,19 +202,13 @@ class EyeFaceTracker:
     It will be exactly between the two eyes.
     """
     def computePerspective(self):
-        (fx,fy,fw,fh) = self.facePosition
-        self.perspective = (fx + fw/2, fy + fh/2)
+        #(fx,fy,fw,fh) = self.facePosition
+        #self.perspective = (fx + fw/2, fy + fh/2)
 
-    def reportStats(self):
-        faceDetect = float(self.successfulFaceDetect)/self.attemptedFaceDetect
-        faceRedetect = float(self.successfulFaceRedetect)/(self.attemptedFaceRedetect + 0.01)
-        print ("face detections: " + str(faceDetect))
-        print ("face redetections: " + str(faceRedetect))
-        if self.eyeMode:
-            eyeDetect = float(self.successfulEyeDetect)/self.attemptedEyeDetect
-            eyeRedetect = float(self.successfulEyeRedetect)/self.attemptedEyeRedetect
-            print ("eye detections: " + str(eyeDetect))
-            print ("eye redetections: " + str(eyeRedetect))
+        eye1, eye2 = self.eyePositions[0], self.eyePositions[1]
+        x1, y1 = eye1[0] + eye1[2]/2, eye1[1] + eye1[3]/2
+        x2, y2 = eye2[0] + eye2[2]/2, eye2[1] + eye2[3]/2
+        self.perspective = (x1 + (x2-x1)/2, y1 + (y2-y1)/2)
 
     """
     Get the average of several previous posisions of the face
@@ -274,7 +236,7 @@ Change the name to something less stupid.
 class ObjectDisplayer:
     def __init__(self):
         self.angleMarkerPos = np.array([400, 30])
-        self.pointOfView = (0, 0)
+        self.viewPoint = (0, 0)
         self.xMarkerOrigin = np.array([50, 0]) + self.angleMarkerPos
         self.yMarkerOrigin = np.array([130, 40]) + self.angleMarkerPos
         self.markerLength = 60.0
@@ -286,16 +248,16 @@ class ObjectDisplayer:
         self.angleY = 0.0
         self.frameDims = None
 
-    def computeAndDisplayAngle(self, pointOfView, frame):
+    def computeAndDisplayAngle(self, viewPoint, frame):
         if self.frameDims == None:
             self.frameDims = frame.shape[:2][::-1]
-        self.pointOfView = pointOfView
+        self.viewPoint = viewPoint
         self.computeAngle()
         self.displayMarker(frame, horiz = True)
         self.displayMarker(frame, horiz = False)
 
     def computeAngle(self):
-        x, y = self.pointOfView[0], self.pointOfView[1]
+        x, y = self.viewPoint[0], self.viewPoint[1]
         width, height = self.frameDims[0], self.frameDims[1]
         self.angleX = (float(x)/width - 0.5) * self.fieldX
         self.angleY = (float(y)/height - 0.5) * self.fieldY
