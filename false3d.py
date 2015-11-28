@@ -3,9 +3,13 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 class False3D:
-    def run(self, camera):
+
+    def __init__(self):
+        self.displayEyeSearchRegion = False
         self.tracker = EyeFaceTracker(eyeMode = True)
         self.displayer = ObjectDisplayer()
+
+    def run(self, camera):
         cap = cv2.VideoCapture(camera)
         frameCount = 0
 
@@ -45,12 +49,11 @@ class False3D:
     def displayFeatures(self, frame):
         (fx,fy,fw,fh) = self.tracker.facePosition
         cv2.rectangle(frame, (fx,fy), (fx+fw,fy+fh), (255,0,0), 2)
-        #######
-        topMargin = int(self.tracker.topMargin * fh)
-        bottomMargin = int((1-self.tracker.bottomMargin) * fh)
-        cv2.rectangle(frame, (fx,fy), (fx+fw, fy+topMargin), (255,0,0), -1)
-        cv2.rectangle(frame, (fx,fy+bottomMargin), (fx+fw, fy+fh), (255,0,0), -1)
-        #######
+        if self.displayEyeSearchRegion:
+            topMargin = int(self.tracker.topMargin * fh)
+            bottomMargin = int((1-self.tracker.bottomMargin) * fh)
+            cv2.rectangle(frame, (fx,fy), (fx+fw, fy+topMargin), (255,0,0), -1)
+            cv2.rectangle(frame, (fx,fy+bottomMargin), (fx+fw, fy+fh), (255,0,0), -1)
         if self.tracker.eyeMode:
             for (ex,ey,ew,eh) in self.tracker.eyePositions:
                 cv2.rectangle(frame, (ex,ey), (ex+ew,ey+eh), (0,255,0), 2)
@@ -69,8 +72,12 @@ class EyeFaceTracker:
         #denotes whether we should track eyes or not
         self.eyeMode = eyeMode
         classifDir = "classifiers/"
-        facecas = classifDir + "haarcascade_frontalface_default.xml"
-        eyecas = classifDir + "haarcascade_eye.xml"
+        facecasDefault = "haarcascade_frontalface_default.xml"
+        facecasAlt = "haarcascade_frontalface_alt.xml"
+        eyecasDefault = "haarcascade_eye.xml"
+        eyecasGlasses = "haarcascade_eye_tree_eyeglasses.xml"
+        facecas = classifDir + facecasDefault
+        eyecas = classifDir + eyecasGlasses
         self.facePositionCascade = cv2.CascadeClassifier(facecas)
         self.eyeCascade = cv2.CascadeClassifier(eyecas)
         self.orb = cv2.ORB()
@@ -86,6 +93,8 @@ class EyeFaceTracker:
         self.bottomMargin = 0.3
         self.face = None
         self.eyes = [None, None]
+        self.xFaceShift = 0
+        self.yFaceShift = 0
         #above this threshold any shift in eyes or face is rejected
         #it is two standard deviations above the observed mean
         self.shiftThreshold = 10
@@ -117,10 +126,7 @@ class EyeFaceTracker:
         (fx,fy,fw,fh) = self.facePosition
         ret, eyes = self.searchForEyes(gray[fy:fy+fh, fx:fx+fw])
         if not ret:
-            dx, dy = self.xFaceShift, self.yFaceShift
-            eyes = self.eyePositions
-            eyes = map(lambda (ex,ey,ew,eh):(ex+dx,ey+dy,ew,eh), eyes)
-            self.updateEyes(eyes)
+            self.updateEyes(eyes, shift = True)
             return False
 
         eyes = map(lambda (ex,ey,ew,eh):(ex+fx,ey+fy,ew,eh), eyes)
@@ -152,18 +158,29 @@ class EyeFaceTracker:
         (fx,fy,fw,fh) = self.facePosition
         ret, eyes = self.searchForEyes(gray[fy:fy+fh, fx:fx+fw])
         if not ret:
-            dx, dy = self.xFaceShift, self.yFaceShift
-            eyes = self.eyePositions
-            eyes = map(lambda (ex,ey,ew,eh):(ex+dx,ey+dy,ew,eh), eyes)
-            self.updateEyes(eyes)
+            self.updateEyes(eyes, shift=True)
             return False
         eyes = map(lambda (ex,ey,ew,eh):(ex+fx,ey+fy,ew,eh), eyes)
         self.updateEyes(eyes)
         return True
 
+    """
+    Search for face using viola jones. Return boolean indicating
+    whether valid face found and the face.
+    """
     def searchForFaces(self, roi, scaleF=1.3, minNeighbors=5):
         faces = self.facePositionCascade.detectMultiScale(roi, scaleF, minNeighbors)
-        return len(faces) == 1, faces
+        if len(faces) != 1:
+            return False, faces
+        return self.validateFace(faces[0]), faces
+
+    def validateFace(self, face):
+        dx = face[0] - self.facePosition[0]
+        dy = face[1] - self.facePosition[1]
+        validX = abs(dx) < self.shiftThreshold
+        validY = abs(dy) < self.shiftThreshold
+        #apply threshold iff tracking face
+        return not self.isTrackingFace or (validX and validY)
 
     """
     Search for eyes using viola jones within the face.
@@ -184,7 +201,14 @@ class EyeFaceTracker:
     def validateEyes(self, eyes):
         area1 = eyes[0][2] * eyes[0][3]
         area2 = eyes[1][2] * eyes[1][3]
-        return area1 > 800 and area2 > 800 and area1 < 6000 and area2 < 6000
+        dx1 = (eyes[0][0] - self.eyePositions[0][0])
+        dx2 = (eyes[1][0] - self.eyePositions[1][0])
+        dy1 = (eyes[0][1] - self.eyePositions[0][1])
+        dy2 = (eyes[1][1] - self.eyePositions[1][1])
+        thres = self.shiftThreshold
+        shiftCheck = all([abs(dx1), abs(dx2), abs(dy1), abs(dy2)]) < thres
+        areaCheck =  area1 > 800 and area2 > 800 and area1 < 6000 and area2 < 6000
+        return shiftCheck and areaCheck
 
     """
     Store the detected features so that we can access them
@@ -200,30 +224,23 @@ class EyeFaceTracker:
                 self.eyes[i] = frame[ey:ey+eh, ex:ex+ew]
 
     """
-    Store the current face.
+    Store the current position of the face and the shift.
     """
     def updateFace(self, face):
         self.xFaceShift = face[0] - self.facePosition[0]
         self.yFaceShift = face[1] - self.facePosition[1]
-        valid1 = abs(self.xFaceShift) < self.shiftThreshold
-        valid2 = abs(self.yFaceShift) < self.shiftThreshold
-        #Apply the threshold iff we are tracking face
-        valid = not self.isTrackingFace or (valid1 and valid2)
-        self.trackingFace = valid
-        if True:
-            self.facePosition = face
+        self.facePosition = face
 
-    def updateEyes(self, eyes):
-        dx1 = (eyes[0][0] - self.eyePositions[0][0])
-        dx2 = (eyes[1][0] - self.eyePositions[1][0])
-        dy1 = (eyes[0][1] - self.eyePositions[0][1])
-        dy2 = (eyes[1][1] - self.eyePositions[1][1])
-        thres = self.shiftThreshold
-        valid = all([abs(dx1), abs(dx2), abs(dy1), abs(dy2)]) < thres
-        #Apply the threshold iff we are tracking eyes
-        valid = valid or not self.isTrackingEyes
-        if True:
-            self.eyePositions = eyes
+    """
+    Check if new eye position and dimension is valid and replace
+    them.
+    """
+    def updateEyes(self, eyes, shift=False):
+        if shift:
+            dx, dy = self.xFaceShift, self.yFaceShift
+            eyes = self.eyePositions
+            eyes = map(lambda (ex,ey,ew,eh):(ex+dx,ey+dy,ew,eh), eyes)
+        self.eyePositions = eyes
 
     """
     Compute the approximate point of perspective.
@@ -262,6 +279,7 @@ class ObjectDisplayer:
         self.computeAngle()
         self.displayMarker(frame, horiz = True)
         self.displayMarker(frame, horiz = False)
+        self.displayObject()
 
     def computeAngle(self):
         x, y = self.viewPoint[0], self.viewPoint[1]
@@ -293,6 +311,9 @@ class ObjectDisplayer:
         arrowEnd = tuple((markerEnd + origin).astype(np.int32))
         cv2.line(frame, origin, arrowEnd, (50,50,50), 2)
         cv2.circle(frame, arrowEnd, 4, (50,50,50), thickness=-1)
+
+    def displayObject(self):
+        pass
 
         
 if __name__ == "__main__":
