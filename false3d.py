@@ -3,6 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import visual as vis
 import sys
+from board import *
 
 class False3D:
 
@@ -15,6 +16,7 @@ class False3D:
     def run(self, camera):
         cap = cv2.VideoCapture(camera)
         frameCount = 0
+        firstTracking = False
 
         while True:
             frameBGR, gray = self.nextFrame(cap)
@@ -22,11 +24,12 @@ class False3D:
             self.tracker.track(frameBGR, gray)
             self.tracker.storeData(frameBGR)
             self.tracker.computePerspective()
-            rotate = frameCount > 5
-            self.displayer.computeAndDisplayAngle(self.tracker.perspective, frameBGR, rotate)
+            self.displayer.computeAndDisplayAngle(self.tracker.perspective, frameBGR, firstTracking)
+            if self.tracker.isTrackingEyes:
+                firstTracking = True
             if self.isTestRun:
                 self.displayFrame(frameBGR)
-            if frameCount > 1000:
+            if frameCount > 400:
                 break
             if self.isTestRun:
                 if cv2.waitKey(1) & 0xFF == ord('q'):
@@ -199,9 +202,9 @@ class EyeFaceTracker:
         faceRestricted = faceRestricted[top:, :]
         eyes = self.eyeCascade.detectMultiScale(faceRestricted, scaleF, minNeighbors)
         eyes = map(lambda (ex,ey,ew,eh):(int(ex),int(ey+top),int(ew),int(eh)), eyes)
-        if len(eyes) != 2:
+        if len(eyes) < 2:
             return False, None
-        return self.validateEyes(eyes), eyes
+        return self.validateEyes([eyes[0], eyes[1]]), [eyes[0], eyes[1]]
 
     def validateEyes(self, eyes):
         area1 = eyes[0][2] * eyes[0][3]
@@ -281,9 +284,17 @@ class ObjectDisplayer:
             self.createObjects()
 
     def createObjects(self):
-        self.objects = vis.frame()
-        cube = vis.box(frame = self.objects, pos=vis.vector(0,0,0), length=5, height=1, width=5, color=vis.color.blue)
-        sphere = vis.sphere(frame = self.objects, pos = vis.vector(0,1.5,0), radius=1, color = vis.color.red)
+        vis.scene.autoscale = False
+        mode = 0
+
+        if mode == 0:
+            self.board = Board()
+            self.objects = self.board.frame
+            self.objects.pos = (0,0,-3)
+        elif mode == 1:
+            self.objects = vis.frame()
+            arrow = vis.arrow(frame=self.objects, pos=vis.vector(0,0,0), axis = vis.vector(0,0,5), color = vis.color.red)
+            self.objects.pos = (0,0,0)
 
     def computeAndDisplayAngle(self, viewPoint, frame, rotate):
         if self.frameDims == None:
@@ -331,10 +342,10 @@ class ObjectDisplayer:
         cv2.circle(frame, arrowEnd, 4, (50,50,50), thickness=-1)
 
     def displayObject(self):
-        dax = -self.dAngleX/30
-        day = -self.dAngleY/30
-        self.objects.rotate(angle=dax, axis = vis.vector(0,1,0))
-        self.objects.rotate(angle=day, axis = vis.vector(1,0,0))
+        dax = -self.dAngleX/40
+        day = -self.dAngleY/40
+        self.objects.rotate(angle=dax, axis = vis.vector(0,1,0), origin=vis.vector(0,0,0))
+        self.objects.rotate(angle=day, axis = vis.vector(1,0,0), origin=vis.vector(0,0,0))
 
         
 if __name__ == "__main__":
