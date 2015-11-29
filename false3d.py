@@ -4,14 +4,15 @@ import matplotlib.pyplot as plt
 import visual as vis
 import sys
 from board import *
+from collections import deque
 
 class False3D:
 
-    def __init__(self, test):
+    def __init__(self, test, mode=0):
         self.isTestRun = test
         self.displayEyeSearchRegion = False
         self.tracker = EyeFaceTracker(eyeMode = True)
-        self.displayer = ObjectDisplayer(self.isTestRun)
+        self.displayer = ObjectDisplayer(self.isTestRun, mode)
 
     def run(self, camera):
         cap = cv2.VideoCapture(camera)
@@ -23,13 +24,13 @@ class False3D:
             frameCount += 1
             self.tracker.track(frameBGR, gray)
             self.tracker.storeData(frameBGR)
-            self.tracker.computePerspective()
-            self.displayer.computeAndDisplayAngle(self.tracker.perspective, frameBGR, firstTracking)
+            self.tracker.computePerspective(firstTracking)
+            self.displayer.computeAndDisplayAngle(self.tracker.perspective, self.tracker.distanceEyes, self.tracker.dDistanceEyes, frameBGR, firstTracking)
             if self.tracker.isTrackingEyes:
                 firstTracking = True
             if self.isTestRun:
                 self.displayFrame(frameBGR)
-            if frameCount > 400:
+            if frameCount > 10000:
                 break
             if self.isTestRun:
                 if cv2.waitKey(1) & 0xFF == ord('q'):
@@ -95,6 +96,12 @@ class EyeFaceTracker:
         self.eyePositions = [(0,0,0,0), (0,0,0,0)]
         self.facePosition = (0,0,0,0)
         self.perspective = (0,0)
+        self.distanceEyes = 0.0
+        self.dDistanceEyes = 0.0
+        self.distanceEyesSmooth = deque()
+        self.distanceEyesSmooth.append(0)
+        self.distanceEyesSmooth.append(0)
+        self.distanceEyesSmooth.append(0) 
         #Portion of face from the top to exclude
         self.topMargin = 0.2
         #Portion of face from the bottom to exclude
@@ -254,11 +261,19 @@ class EyeFaceTracker:
     Compute the approximate point of perspective.
     It will be exactly between the two eyes.
     """
-    def computePerspective(self):
+    def computePerspective(self, firstTracking):
         eye1, eye2 = self.eyePositions[0], self.eyePositions[1]
         x1, y1 = eye1[0] + eye1[2]/2, eye1[1] + eye1[3]/2
         x2, y2 = eye2[0] + eye2[2]/2, eye2[1] + eye2[3]/2
         self.perspective = (x1 + (x2-x1)/2, y1 + (y2-y1)/2)
+        distanceEyes = ((x1 - x2)**2 + (y1 - y2)**2) ** 0.5
+        dD = distanceEyes - self.distanceEyes
+        self.distanceEyes = distanceEyes
+        if firstTracking:
+            self.distanceEyesSmooth.popleft()
+            self.distanceEyesSmooth.append(dD)
+            self.dDistanceEyes = sum([x for x in self.distanceEyesSmooth]) / 3.0
+        print self.dDistanceEyes
 
 """
 This class will display and rotate 3D projection of an image
@@ -266,7 +281,7 @@ based on the perspective.
 Change the name to something less stupid.
 """
 class ObjectDisplayer:
-    def __init__(self, isTest):
+    def __init__(self, isTest, mode):
         self.isTestRun = isTest
         self.angleMarkerPos = np.array([400, 30])
         self.viewPoint = (0, 0)
@@ -279,13 +294,16 @@ class ObjectDisplayer:
         self.disp = False
         self.angleX = 0.0
         self.angleY = 0.0
+        self.dAngleX = 0.0
+        self.dAngleY = 0.0
+        self.dDistanceEyes = 0
+        self.distanceEyes = 0
         self.frameDims = None
         if not self.isTestRun:
-            self.createObjects()
+            self.createObjects(mode)
 
-    def createObjects(self):
+    def createObjects(self, mode):
         vis.scene.autoscale = False
-        mode = 0
 
         if mode == 0:
             self.board = Board()
@@ -295,11 +313,14 @@ class ObjectDisplayer:
             self.objects = vis.frame()
             arrow = vis.arrow(frame=self.objects, pos=vis.vector(0,0,0), axis = vis.vector(0,0,5), color = vis.color.red)
             self.objects.pos = (0,0,0)
+        self.objects.velocity = vis.vector(0,0,0)
 
-    def computeAndDisplayAngle(self, viewPoint, frame, rotate):
+    def computeAndDisplayAngle(self, viewPoint, distanceEyes, dDistanceEyes, frame, rotate):
         if self.frameDims == None:
             self.frameDims = frame.shape[:2][::-1]
         self.viewPoint = viewPoint
+        self.distanceEyes = distanceEyes
+        self.dDistanceEyes = dDistanceEyes
         self.computeAngle()
         self.displayMarker(frame, horiz = True)
         self.displayMarker(frame, horiz = False)
@@ -344,8 +365,10 @@ class ObjectDisplayer:
     def displayObject(self):
         dax = -self.dAngleX/40
         day = -self.dAngleY/40
+        self.objects.velocity = (0,0, self.dDistanceEyes/3)
         self.objects.rotate(angle=dax, axis = vis.vector(0,1,0), origin=vis.vector(0,0,0))
         self.objects.rotate(angle=day, axis = vis.vector(1,0,0), origin=vis.vector(0,0,0))
+        self.objects.pos += self.objects.velocity
 
         
 if __name__ == "__main__":
