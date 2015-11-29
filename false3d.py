@@ -1,13 +1,16 @@
 import cv2
 import numpy as np
 import matplotlib.pyplot as plt
+import visual as vis
+import sys
 
 class False3D:
 
-    def __init__(self):
+    def __init__(self, test):
+        self.isTestRun = test
         self.displayEyeSearchRegion = False
         self.tracker = EyeFaceTracker(eyeMode = True)
-        self.displayer = ObjectDisplayer()
+        self.displayer = ObjectDisplayer(self.isTestRun)
 
     def run(self, camera):
         cap = cv2.VideoCapture(camera)
@@ -19,13 +22,15 @@ class False3D:
             self.tracker.track(frameBGR, gray)
             self.tracker.storeData(frameBGR)
             self.tracker.computePerspective()
-            self.displayer.computeAndDisplayAngle(self.tracker.perspective, frameBGR)
-    
-            self.displayFrame(frameBGR)
-            if frameCount > 200:
+            rotate = frameCount > 5
+            self.displayer.computeAndDisplayAngle(self.tracker.perspective, frameBGR, rotate)
+            if self.isTestRun:
+                self.displayFrame(frameBGR)
+            if frameCount > 1000:
                 break
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                break
+            if self.isTestRun:
+                if cv2.waitKey(1) & 0xFF == ord('q'):
+                    break
 
         cap.release()
         cv2.destroyAllWindows()
@@ -258,7 +263,8 @@ based on the perspective.
 Change the name to something less stupid.
 """
 class ObjectDisplayer:
-    def __init__(self):
+    def __init__(self, isTest):
+        self.isTestRun = isTest
         self.angleMarkerPos = np.array([400, 30])
         self.viewPoint = (0, 0)
         self.xMarkerOrigin = np.array([50, 0]) + self.angleMarkerPos
@@ -271,21 +277,33 @@ class ObjectDisplayer:
         self.angleX = 0.0
         self.angleY = 0.0
         self.frameDims = None
+        if not self.isTestRun:
+            self.createObjects()
 
-    def computeAndDisplayAngle(self, viewPoint, frame):
+    def createObjects(self):
+        self.objects = vis.frame()
+        cube = vis.box(frame = self.objects, pos=vis.vector(0,0,0), length=5, height=1, width=5, color=vis.color.blue)
+        sphere = vis.sphere(frame = self.objects, pos = vis.vector(0,1.5,0), radius=1, color = vis.color.red)
+
+    def computeAndDisplayAngle(self, viewPoint, frame, rotate):
         if self.frameDims == None:
             self.frameDims = frame.shape[:2][::-1]
         self.viewPoint = viewPoint
         self.computeAngle()
         self.displayMarker(frame, horiz = True)
         self.displayMarker(frame, horiz = False)
-        self.displayObject()
+        if rotate and not self.isTestRun:
+            self.displayObject()
 
     def computeAngle(self):
         x, y = self.viewPoint[0], self.viewPoint[1]
         width, height = self.frameDims[0], self.frameDims[1]
-        self.angleX = (float(x)/width - 0.5) * self.fieldX
-        self.angleY = (float(y)/height - 0.5) * self.fieldY
+        angleX = (float(x)/width - 0.5) * self.fieldX
+        angleY = (float(y)/height - 0.5) * self.fieldY
+        self.dAngleX = angleX - self.angleX
+        self.dAngleY = angleY - self.angleY
+        self.angleX = angleX
+        self.angleY = angleY
 
     def displayMarker(self, frame, horiz=True):
         if horiz:
@@ -313,13 +331,23 @@ class ObjectDisplayer:
         cv2.circle(frame, arrowEnd, 4, (50,50,50), thickness=-1)
 
     def displayObject(self):
-        pass
+        dax = -self.dAngleX/30
+        day = -self.dAngleY/30
+        self.objects.rotate(angle=dax, axis = vis.vector(0,1,0))
+        self.objects.rotate(angle=day, axis = vis.vector(1,0,0))
 
         
 if __name__ == "__main__":
     try:
-        camera = int(sys.argv[1])
+        mode = sys.argv[1]
+    except Exception:
+        mode = "--run"
+    try:
+        camera = int(sys.argv[2])
     except Exception:
         camera = 0
-    false3D = False3D()
+    if mode == "--test":
+        false3D = False3D(test=True)
+    elif mode == "--run":
+        false3D = False3D(test=False)
     false3D.run(camera)
