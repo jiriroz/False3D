@@ -11,23 +11,22 @@ class False3D:
     def __init__(self, test, mode=0):
         self.isTestRun = test
         self.displayEyeSearchRegion = False
-        self.tracker = EyeFaceTracker(eyeMode = True)
+        self.tracker = EyeFaceTracker()
         self.displayer = ObjectDisplayer(self.isTestRun, mode)
 
     def run(self, camera):
         cap = cv2.VideoCapture(camera)
         frameCount = 0
-        firstTracking = False
 
         while True:
             frameBGR, gray = self.nextFrame(cap)
             frameCount += 1
             self.tracker.track(frameBGR, gray)
             self.tracker.storeData(frameBGR)
-            self.tracker.computePerspective(firstTracking)
-            self.displayer.computeAndDisplayAngle(self.tracker.perspective, self.tracker.distanceEyes, self.tracker.dDistanceEyes, frameBGR, firstTracking)
+            self.tracker.computePerspective()
+            self.displayer.computeAndDisplayAngle(self.tracker.perspective, self.tracker.distanceEyes, self.tracker.dDistanceEyes, frameBGR, self.tracker.startedTracking)
             if self.tracker.isTrackingEyes:
-                firstTracking = True
+                self.tracker.startedTracking = True
             if self.isTestRun:
                 self.displayFrame(frameBGR)
             if frameCount > 10000:
@@ -63,9 +62,12 @@ class False3D:
             bottomMargin = int((1-self.tracker.bottomMargin) * fh)
             cv2.rectangle(frame, (fx,fy), (fx+fw, fy+topMargin), (255,0,0), -1)
             cv2.rectangle(frame, (fx,fy+bottomMargin), (fx+fw, fy+fh), (255,0,0), -1)
-        if self.tracker.eyeMode:
-            for (ex,ey,ew,eh) in self.tracker.eyePositions:
-                cv2.rectangle(frame, (ex,ey), (ex+ew,ey+eh), (0,255,0), 2)
+        #for (ex,ey,ew,eh) in self.tracker.eyePositions:
+        #     cv2.rectangle(frame, (ex,ey), (ex+ew,ey+eh), (0,255,0), 2)
+        (ex,ey,ew,eh) = self.tracker.eyePositions[0]
+        cv2.rectangle(frame, (ex,ey), (ex+ew,ey+eh), (0,255,0), 2)
+        (ex,ey,ew,eh) = self.tracker.eyePositions[1]
+        cv2.rectangle(frame, (ex,ey), (ex+ew,ey+eh), (0,0,255), 2)
         cv2.circle(frame, self.tracker.perspective, 5, (0,0,255), thickness=-1)
 
 """
@@ -75,11 +77,8 @@ class EyeFaceTracker:
     """
     Class contructor. Loads classifiers and matchers, initializes
     property variables.
-    @param eyeMode boolean determining whether we should track eyes
     """
-    def __init__(self, eyeMode=False):
-        #denotes whether we should track eyes or not
-        self.eyeMode = eyeMode
+    def __init__(self):
         classifDir = "classifiers/"
         facecasDefault = "haarcascade_frontalface_default.xml"
         facecasAlt = "haarcascade_frontalface_alt.xml"
@@ -93,15 +92,16 @@ class EyeFaceTracker:
         self.matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
         self.isTrackingFace = False
         self.isTrackingEyes = False
+        self.startedTracking = False
         self.eyePositions = [(0,0,0,0), (0,0,0,0)]
         self.facePosition = (0,0,0,0)
         self.perspective = (0,0)
         self.distanceEyes = 0.0
         self.dDistanceEyes = 0.0
         self.distanceEyesSmooth = deque()
-        self.distanceEyesSmooth.append(0)
-        self.distanceEyesSmooth.append(0)
-        self.distanceEyesSmooth.append(0) 
+        self.smoothN = 5
+        for x in range(self.smoothN):
+            self.distanceEyesSmooth.append(0)
         #Portion of face from the top to exclude
         self.topMargin = 0.2
         #Portion of face from the bottom to exclude
@@ -110,6 +110,7 @@ class EyeFaceTracker:
         self.eyes = [None, None]
         self.xFaceShift = 0
         self.yFaceShift = 0
+        self.maxEyeShift = 16.0
         #above this threshold any shift in eyes or face is rejected
         #it is two standard deviations above the observed mean
         self.shiftThreshold = 10
@@ -124,9 +125,9 @@ class EyeFaceTracker:
         if not self.isTrackingFace:
             self.isTrackingFace = self.detectFace(gray)
 
-        if self.eyeMode and not self.isTrackingEyes and self.isTrackingFace:
+        if not self.isTrackingEyes and self.isTrackingFace:
             self.isTrackingEyes = self.detectEyes(gray)
-        elif self.eyeMode and self.isTrackingEyes:
+        elif self.isTrackingEyes:
             self.isTrackingEyes = self.trackEyes(frameBGR, gray)
 
     def detectFace(self, gray):
@@ -168,7 +169,12 @@ class EyeFaceTracker:
         self.updateFace(newFacePos)
         return True
 
-    """Track eyes using viola jones"""
+    """
+    Track eyes and update them.
+    @param frame BGR frame
+    @param gray frame in grayscale
+    @return boolean whether the eyes were successfully tracked
+    """
     def trackEyes(self, frame, gray):
         (fx,fy,fw,fh) = self.facePosition
         ret, eyes = self.searchForEyes(gray[fy:fy+fh, fx:fx+fw])
@@ -255,25 +261,50 @@ class EyeFaceTracker:
             dx, dy = self.xFaceShift, self.yFaceShift
             eyes = self.eyePositions
             eyes = map(lambda (ex,ey,ew,eh):(ex+dx,ey+dy,ew,eh), eyes)
-        self.eyePositions = eyes
+        eyes = self.fixEyeOrder(eyes)
+        shiftedEyes = []
+        if not self.startedTracking:
+            shiftedEyes = eyes
+        else:
+            for i in range(2):
+                (exOld,eyOld,ewOld,ehOld) = self.eyePositions[i]
+                (exNew,eyNew,ewNew,ehNew) = eyes[i]
+                dex, dey = self.setLength(exNew - exOld, eyNew - eyOld, self.maxEyeShift)
+                shiftedEyes.append([int(exOld + dex), int(eyOld + dey), ewNew, ehNew])
+        self.eyePositions = shiftedEyes
+
+    def fixEyeOrder(self, eyes):
+        (ex1,ey1,ew1,eh1) = eyes[0]
+        (ex2,ey2,ew2,eh2) = eyes[1]
+        if ex1 > ex2:
+             temp = eyes[1]
+             eyes[1] = eyes[0]
+             eyes[0] = temp
+        return eyes
+
+    def setLength(self, x, y, mag):
+        length = (x**2 + y**2)**0.5
+        if length <= mag:
+            return x, y
+        alpha = length / mag
+        return x/alpha, y/alpha
 
     """
     Compute the approximate point of perspective.
     It will be exactly between the two eyes.
     """
-    def computePerspective(self, firstTracking):
+    def computePerspective(self):
         eye1, eye2 = self.eyePositions[0], self.eyePositions[1]
         x1, y1 = eye1[0] + eye1[2]/2, eye1[1] + eye1[3]/2
         x2, y2 = eye2[0] + eye2[2]/2, eye2[1] + eye2[3]/2
         self.perspective = (x1 + (x2-x1)/2, y1 + (y2-y1)/2)
         distanceEyes = ((x1 - x2)**2 + (y1 - y2)**2) ** 0.5
-        dD = distanceEyes - self.distanceEyes
+        diffDist = distanceEyes - self.distanceEyes
         self.distanceEyes = distanceEyes
-        if firstTracking:
+        if self.startedTracking:
             self.distanceEyesSmooth.popleft()
-            self.distanceEyesSmooth.append(dD)
-            self.dDistanceEyes = sum([x for x in self.distanceEyesSmooth]) / 3.0
-        print self.dDistanceEyes
+            self.distanceEyesSmooth.append(diffDist)
+            self.dDistanceEyes = sum([x for x in self.distanceEyesSmooth]) / self.smoothN
 
 """
 This class will display and rotate 3D projection of an image
@@ -289,15 +320,16 @@ class ObjectDisplayer:
         self.yMarkerOrigin = np.array([130, 40]) + self.angleMarkerPos
         self.markerLength = 60.0
         self.innerMarkerRatio = 0.7
-        self.fieldX = 120.0
-        self.fieldY = 90.0 #both twice the actual (presumed) value
+        self.fieldX = 60.0 #angle of the horizontal field of the camera
+        self.fieldY = 45.0 #angle of the vertical field of the camera
+        self.angleScale = 2.0 #scale the angle by this value to make it look nicer
         self.disp = False
         self.angleX = 0.0
         self.angleY = 0.0
         self.dAngleX = 0.0
         self.dAngleY = 0.0
-        self.dDistanceEyes = 0
         self.distanceEyes = 0
+        self.dDistanceEyes = 0
         self.frameDims = None
         if not self.isTestRun:
             self.createObjects(mode)
@@ -330,8 +362,8 @@ class ObjectDisplayer:
     def computeAngle(self):
         x, y = self.viewPoint[0], self.viewPoint[1]
         width, height = self.frameDims[0], self.frameDims[1]
-        angleX = (float(x)/width - 0.5) * self.fieldX
-        angleY = (float(y)/height - 0.5) * self.fieldY
+        angleX = (float(x)/width - 0.5) * self.fieldX * self.angleScale
+        angleY = (float(y)/height - 0.5) * self.fieldY * self.angleScale
         self.dAngleX = angleX - self.angleX
         self.dAngleY = angleY - self.angleY
         self.angleX = angleX
@@ -342,12 +374,12 @@ class ObjectDisplayer:
             direction = np.array([0, self.markerLength])
             angle = -self.angleX
             origin = self.xMarkerOrigin
-            field = self.fieldX
+            field = self.fieldX * self.angleScale
         else:
             direction = np.array([self.markerLength, 0])
             angle = self.angleY
             origin = self.yMarkerOrigin
-            field = self.fieldY
+            field = self.fieldY * self.angleScale
         endPointRight = np.dot(direction, cv2.getRotationMatrix2D((2,2), -field/2, 1))[:2] + origin
         endPointLeft = np.dot(direction, cv2.getRotationMatrix2D((2,2), field/2, 1))[:2] + origin
         endPointTransl = direction + origin
