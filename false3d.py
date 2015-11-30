@@ -1,10 +1,18 @@
 import cv2
 import numpy as np
+import random
 import matplotlib.pyplot as plt
 import visual as vis
 import sys
 from board import *
 from collections import deque
+
+#TODO: Often only one eye is detected. Try handling the edges with one eye.
+#Also try handling each eye separately.
+#TODO: Run the face/eye detection on a lot of faces from a dataset. Primarily
+#to find whether my margins are set correctly.
+#TODO: Background subtraction.
+#TODO: Argparse
 
 class False3D:
 
@@ -62,8 +70,11 @@ class False3D:
             bottomMargin = int((1-self.tracker.bottomMargin) * fh)
             cv2.rectangle(frame, (fx,fy), (fx+fw, fy+topMargin), (255,0,0), -1)
             cv2.rectangle(frame, (fx,fy+bottomMargin), (fx+fw, fy+fh), (255,0,0), -1)
-        #for (ex,ey,ew,eh) in self.tracker.eyePositions:
-        #     cv2.rectangle(frame, (ex,ey), (ex+ew,ey+eh), (0,255,0), 2)
+            leftMargin = int(self.tracker.leftMargin * fw)
+            rightMargin = int((1-self.tracker.rightMargin) * fw)
+            cv2.rectangle(frame, (fx,fy), (fx+leftMargin, fy+fh), (255,0,0), -1)
+            cv2.rectangle(frame, (fx+rightMargin,fy), (fx+fw, fy+fh), (255,0,0), -1)
+
         (ex,ey,ew,eh) = self.tracker.eyePositions[0]
         cv2.rectangle(frame, (ex,ey), (ex+ew,ey+eh), (0,255,0), 2)
         (ex,ey,ew,eh) = self.tracker.eyePositions[1]
@@ -99,21 +110,27 @@ class EyeFaceTracker:
         self.distanceEyes = 0.0
         self.dDistanceEyes = 0.0
         self.distanceEyesSmooth = deque()
-        self.smoothN = 5
+        self.smoothN = 4
         for x in range(self.smoothN):
             self.distanceEyesSmooth.append(0)
         #Portion of face from the top to exclude
         self.topMargin = 0.2
         #Portion of face from the bottom to exclude
-        self.bottomMargin = 0.3
+        self.bottomMargin = 0.2
+        #Portion of face from the left to exclude
+        self.leftMargin = 0.10
+        #Portion of face from the right to exclude
+        self.rightMargin = 0.10
         self.face = None
         self.eyes = [None, None]
         self.xFaceShift = 0
         self.yFaceShift = 0
-        self.maxEyeShift = 16.0
+        self.maxEyeShift = 18.0
         #above this threshold any shift in eyes or face is rejected
         #it is two standard deviations above the observed mean
-        self.shiftThreshold = 10
+        self.shiftThreshold = 10.0
+        #minimum face shift to search for eyes again
+        self.minFaceShift = 1.0
         #termination criteria for meanshift
         self.maxIterations = 10
         self.termCrit = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, self.maxIterations, 1)
@@ -176,6 +193,9 @@ class EyeFaceTracker:
     @return boolean whether the eyes were successfully tracked
     """
     def trackEyes(self, frame, gray):
+        t = self.minFaceShift
+        if abs(self.xFaceShift) < t and abs(self.yFaceShift) < t:
+            return True
         (fx,fy,fw,fh) = self.facePosition
         ret, eyes = self.searchForEyes(gray[fy:fy+fh, fx:fx+fw])
         if not ret:
@@ -207,14 +227,21 @@ class EyeFaceTracker:
     Search for eyes using viola jones within the face.
     Exclude an upper and lower portion of the face.
     """
-    def searchForEyes(self, face, scaleF=1.3, minNeighbors=5):
+    def searchForEyes(self, face, scaleF=1.2, minNeighbors=5):
         height = face.shape[0]
+        width = face.shape[1]
         top = height * self.topMargin
         bottom = height * (1 - self.bottomMargin)
+        left = width * self.leftMargin
+        right = width * (1 - self.rightMargin)
         faceRestricted = face[:bottom, :]
         faceRestricted = faceRestricted[top:, :]
+        faceRestricted = faceRestricted[:, :right]
+        faceRestricted = faceRestricted[:, left:]
         eyes = self.eyeCascade.detectMultiScale(faceRestricted, scaleF, minNeighbors)
-        eyes = map(lambda (ex,ey,ew,eh):(int(ex),int(ey+top),int(ew),int(eh)), eyes)
+        eyes = map(lambda (ex,ey,ew,eh):(int(ex+left),int(ey+top),int(ew),int(eh)), eyes)
+        #if len(eyes) == 1:
+            #print "One eye" + str(random.randint(0,100))
         if len(eyes) < 2:
             return False, None
         return self.validateEyes([eyes[0], eyes[1]]), [eyes[0], eyes[1]]
@@ -397,10 +424,12 @@ class ObjectDisplayer:
     def displayObject(self):
         dax = -self.dAngleX/40
         day = -self.dAngleY/40
-        self.objects.velocity = (0,0, self.dDistanceEyes/3)
-        self.objects.rotate(angle=dax, axis = vis.vector(0,1,0), origin=vis.vector(0,0,0))
-        self.objects.rotate(angle=day, axis = vis.vector(1,0,0), origin=vis.vector(0,0,0))
+        self.objects.velocity = (0,0, self.dDistanceEyes/5)
+        self.objects.rotate(angle=dax, axis = vis.vector(0,1,0), origin=self.objects.pos)
+        self.objects.rotate(angle=day, axis = vis.vector(1,0,0), origin=self.objects.pos)
         self.objects.pos += self.objects.velocity
+        axis = self.objects.axis
+        self.objects.axis = (axis[0], 0, axis[2]) #fix x axis
 
         
 if __name__ == "__main__":
