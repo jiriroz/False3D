@@ -7,10 +7,6 @@ import sys
 from board import *
 from collections import deque
 
-#TODO: Often only one eye is detected. Try handling the edges with one eye.
-#Also try handling each eye separately.
-#TODO: Run the face/eye detection on a lot of faces from a dataset. Primarily
-#to find whether my margins are set correctly.
 #TODO: Background subtraction.
 #TODO: Argparse
 
@@ -114,9 +110,9 @@ class EyeFaceTracker:
         for x in range(self.smoothN):
             self.distanceEyesSmooth.append(0)
         #Portion of face from the top to exclude
-        self.topMargin = 0.2
+        self.topMargin = 0
         #Portion of face from the bottom to exclude
-        self.bottomMargin = 0.2
+        self.bottomMargin = 0
         #Portion of face from the left to exclude
         self.leftMargin = 0.10
         #Portion of face from the right to exclude
@@ -125,7 +121,7 @@ class EyeFaceTracker:
         self.eyes = [None, None]
         self.xFaceShift = 0
         self.yFaceShift = 0
-        self.maxEyeShift = 18.0
+        self.maxEyeShift = 20.0
         #above this threshold any shift in eyes or face is rejected
         #it is two standard deviations above the observed mean
         self.shiftThreshold = 10.0
@@ -142,10 +138,8 @@ class EyeFaceTracker:
         if not self.isTrackingFace:
             self.isTrackingFace = self.detectFace(gray)
 
-        if not self.isTrackingEyes and self.isTrackingFace:
-            self.isTrackingEyes = self.detectEyes(gray)
-        elif self.isTrackingEyes:
-            self.isTrackingEyes = self.trackEyes(frameBGR, gray)
+        if self.isTrackingFace:
+            self.isTrackingEyes = self.trackEyes(gray)
 
     def detectFace(self, gray):
         ret, faces = self.searchForFaces(gray)
@@ -153,17 +147,6 @@ class EyeFaceTracker:
             return False
         face = faces[0]
         self.updateFace(face)
-        return True
-
-    def detectEyes(self, gray):
-        (fx,fy,fw,fh) = self.facePosition
-        ret, eyes = self.searchForEyes(gray[fy:fy+fh, fx:fx+fw])
-        if not ret:
-            self.updateEyes(eyes, shift = True)
-            return False
-
-        eyes = map(lambda (ex,ey,ew,eh):(ex+fx,ey+fy,ew,eh), eyes)
-        self.updateEyes(eyes)
         return True
         
     """Track face using meanshift."""
@@ -192,17 +175,23 @@ class EyeFaceTracker:
     @param gray frame in grayscale
     @return boolean whether the eyes were successfully tracked
     """
-    def trackEyes(self, frame, gray):
-        t = self.minFaceShift
-        if abs(self.xFaceShift) < t and abs(self.yFaceShift) < t:
-            return True
+    def trackEyes(self, gray):
+        if self.isTrackingEyes:
+            #do not redetect if the face hasn't moved
+            t = self.minFaceShift
+            if abs(self.xFaceShift) < t and abs(self.yFaceShift) < t:
+                return True
         (fx,fy,fw,fh) = self.facePosition
-        ret, eyes = self.searchForEyes(gray[fy:fy+fh, fx:fx+fw])
-        if not ret:
-            self.updateEyes(eyes, shift=True)
+        eyes = self.searchForEyes(gray[fy:fy+fh, fx:fx+fw])
+        if len(eyes) == 0:
+            self.updateEyes(self.eyePositions, [], [0, 1])
             return False
         eyes = map(lambda (ex,ey,ew,eh):(ex+fx,ey+fy,ew,eh), eyes)
-        self.updateEyes(eyes)
+        if len(eyes) == 1:
+            eyes, this, other = self.handleOneEye(eyes[0])
+            self.updateEyes(eyes, [this], [other])
+        else:
+            self.updateEyes(self.fixEyeOrder(eyes), [0, 1], [])
         return True
 
     """
@@ -240,36 +229,36 @@ class EyeFaceTracker:
         faceRestricted = faceRestricted[:, left:]
         eyes = self.eyeCascade.detectMultiScale(faceRestricted, scaleF, minNeighbors)
         eyes = map(lambda (ex,ey,ew,eh):(int(ex+left),int(ey+top),int(ew),int(eh)), eyes)
-        #if len(eyes) == 1:
-            #print "One eye" + str(random.randint(0,100))
-        if len(eyes) < 2:
-            return False, None
-        return self.validateEyes([eyes[0], eyes[1]]), [eyes[0], eyes[1]]
+        if not self.validateEyes(eyes[:2]):
+            return []
+        return eyes[:2]
+
+    """In case of only one eye detected, find out which one that was and
+    shift the other one by face shift.
+    @param: One eye, not known whether left or right
+    @return: Array of two eyes with the other one shifted."""
+    def handleOneEye(self, eye):
+        dxLeft = eye[0] - self.eyePositions[0][0]
+        dyLeft = eye[1] - self.eyePositions[0][1]
+        dxRight = eye[0] - self.eyePositions[1][0]
+        dyRight = eye[1] - self.eyePositions[1][1]
+        isLeft = (dxLeft**2 + dyLeft**2) < (dxRight**2 + dyRight**2)
+        if isLeft:
+            return [eye, self.eyePositions[1]], 0, 1
+        else:
+            return [self.eyePositions[0], eye], 1, 0
 
     def validateEyes(self, eyes):
-        area1 = eyes[0][2] * eyes[0][3]
-        area2 = eyes[1][2] * eyes[1][3]
-        dx1 = (eyes[0][0] - self.eyePositions[0][0])
-        dx2 = (eyes[1][0] - self.eyePositions[1][0])
-        dy1 = (eyes[0][1] - self.eyePositions[0][1])
-        dy2 = (eyes[1][1] - self.eyePositions[1][1])
         thres = self.shiftThreshold
-        shiftCheck = all([abs(dx1), abs(dx2), abs(dy1), abs(dy2)]) < thres
-        areaCheck =  area1 > 800 and area2 > 800 and area1 < 6000 and area2 < 6000
-        return shiftCheck and areaCheck
-
-    """
-    Store the detected features so that we can access them
-    in the next iteration.
-    """
-    def storeData(self, frame):
-        if self.isTrackingFace:
-            (fx,fy,fw,fh) = self.facePosition
-            self.face = frame[fy:fy+fh, fx:fx+fw]
-        if self.isTrackingEyes:
-            for i in range(len(self.eyePositions)):
-                (ex,ey,ew,eh) = self.eyePositions[i]
-                self.eyes[i] = frame[ey:ey+eh, ex:ex+ew]
+        for i in range(len(eyes)):
+            area = eyes[i][2] * eyes[i][3]
+            dx = (eyes[i][0] - self.eyePositions[i][0])
+            dy = (eyes[i][1] - self.eyePositions[i][1])
+            shiftCheck = abs(dx) < thres and abs(dy) < thres
+            areaCheck = area > 800 and area < 6000
+            if not (shiftCheck or areaCheck):
+                return False
+        return True
 
     """
     Store the current position of the face and the shift.
@@ -283,22 +272,24 @@ class EyeFaceTracker:
     Check if new eye position and dimension is valid and replace
     them.
     """
-    def updateEyes(self, eyes, shift=False):
-        if shift:
-            dx, dy = self.xFaceShift, self.yFaceShift
-            eyes = self.eyePositions
-            eyes = map(lambda (ex,ey,ew,eh):(ex+dx,ey+dy,ew,eh), eyes)
-        eyes = self.fixEyeOrder(eyes)
-        shiftedEyes = []
-        if not self.startedTracking:
-            shiftedEyes = eyes
-        else:
-            for i in range(2):
-                (exOld,eyOld,ewOld,ehOld) = self.eyePositions[i]
-                (exNew,eyNew,ewNew,ehNew) = eyes[i]
-                dex, dey = self.setLength(exNew - exOld, eyNew - eyOld, self.maxEyeShift)
-                shiftedEyes.append([int(exOld + dex), int(eyOld + dey), ewNew, ehNew])
-        self.eyePositions = shiftedEyes
+    def updateEyes(self, eyes, detected, notDetected):
+        for i in notDetected:
+            eyes[i] = self.shiftEye(eyes[i])
+        for i in detected:
+            if not self.startedTracking:
+                continue
+            (exOld,eyOld,ewOld,ehOld) = self.eyePositions[i]
+            (exNew,eyNew,ewNew,ehNew) = eyes[i]
+            dist = ((exOld - exNew)**2 + (eyOld - eyNew)**2)**0.5
+            dist = dist/50
+            #make the eyes approach slower as they get closer
+            dex, dey = self.setLength(exNew - exOld, eyNew - eyOld, self.maxEyeShift*dist)
+            eyes[i] = [int(exOld + dex), int(eyOld + dey), ewNew, ehNew]
+        self.eyePositions = eyes
+
+    def shiftEye(self, eye):
+        dx, dy = self.xFaceShift, self.yFaceShift
+        return [eye[0] + dx, eye[1] + dy, eye[2], eye[3]]
 
     def fixEyeOrder(self, eyes):
         (ex1,ey1,ew1,eh1) = eyes[0]
@@ -315,6 +306,19 @@ class EyeFaceTracker:
             return x, y
         alpha = length / mag
         return x/alpha, y/alpha
+
+    """
+    Store the detected features so that we can access them
+    in the next iteration.
+    """
+    def storeData(self, frame):
+        if self.isTrackingFace:
+            (fx,fy,fw,fh) = self.facePosition
+            self.face = frame[fy:fy+fh, fx:fx+fw]
+        if self.isTrackingEyes:
+            for i in range(len(self.eyePositions)):
+                (ex,ey,ew,eh) = self.eyePositions[i]
+                self.eyes[i] = frame[ey:ey+eh, ex:ex+ew]
 
     """
     Compute the approximate point of perspective.
@@ -424,7 +428,7 @@ class ObjectDisplayer:
     def displayObject(self):
         dax = -self.dAngleX/40
         day = -self.dAngleY/40
-        self.objects.velocity = (0,0, self.dDistanceEyes/5)
+        self.objects.velocity = (0,0,self.dDistanceEyes/5)
         self.objects.rotate(angle=dax, axis = vis.vector(0,1,0), origin=self.objects.pos)
         self.objects.rotate(angle=day, axis = vis.vector(1,0,0), origin=self.objects.pos)
         self.objects.pos += self.objects.velocity
