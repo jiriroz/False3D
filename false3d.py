@@ -100,6 +100,7 @@ class EyeFaceTracker:
         self.isTrackingFace = False
         self.isTrackingEyes = False
         self.startedTracking = False
+        self.oneEye = False
         self.eyePositions = [(0,0,0,0), (0,0,0,0)]
         self.facePosition = (0,0,0,0)
         self.perspective = (0,0)
@@ -121,7 +122,7 @@ class EyeFaceTracker:
         self.eyes = [None, None]
         self.xFaceShift = 0
         self.yFaceShift = 0
-        self.maxEyeShift = 20.0
+        self.maxEyeShift = 10.0
         #above this threshold any shift in eyes or face is rejected
         #it is two standard deviations above the observed mean
         self.shiftThreshold = 10.0
@@ -183,7 +184,7 @@ class EyeFaceTracker:
                 return True
         (fx,fy,fw,fh) = self.facePosition
         eyes = self.searchForEyes(gray[fy:fy+fh, fx:fx+fw])
-        if len(eyes) == 0:
+        if len(eyes) == 0 or (len(eyes) < 2 and not self.oneEye):
             self.updateEyes(self.eyePositions, [], [0, 1])
             return False
         eyes = map(lambda (ex,ey,ew,eh):(ex+fx,ey+fy,ew,eh), eyes)
