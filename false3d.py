@@ -132,7 +132,7 @@ class EyeFaceTracker:
         self.eyes = [None, None]
         self.xFaceShift = 0
         self.yFaceShift = 0
-        self.maxEyeShift = 10.0
+        self.maxEyeShift = 15.0
         #above this threshold any shift in eyes or face is rejected
         #it is two standard deviations above the observed mean
         self.shiftThreshold = 10.0
