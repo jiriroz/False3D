@@ -16,7 +16,6 @@ python false3D.py --run [webCam number]
 
 """
 
-
 #TODO: Background subtraction.
 #TODO: Argparse
 
@@ -107,12 +106,12 @@ class EyeFaceTracker:
         self.eyeCascade = cv2.CascadeClassifier(eyecas)
         self.orb = cv2.ORB()
         self.matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
-        self.isTrackingFace = False
+        self.isTrackingFace = True
         self.isTrackingEyes = False
         self.startedTracking = False
         self.oneEye = False
         self.eyePositions = [(0,0,0,0), (0,0,0,0)]
-        self.facePosition = (0,0,0,0)
+        self.facePosition = (0,0,640,480)
         self.perspective = (0,0)
         self.distanceEyes = 0.0
         self.dDistanceEyes = 0.0
@@ -132,10 +131,10 @@ class EyeFaceTracker:
         self.eyes = [None, None]
         self.xFaceShift = 0
         self.yFaceShift = 0
-        self.maxEyeShift = 10.0
+        self.maxEyeShift = 15.0
         #above this threshold any shift in eyes or face is rejected
         #it is two standard deviations above the observed mean
-        self.shiftThreshold = 15.0
+        self.shiftThreshold = 10.0
         #minimum face shift to search for eyes again
         self.minFaceShift = 1.0
         #termination criteria for meanshift
@@ -144,8 +143,8 @@ class EyeFaceTracker:
 
     """Search for and track face and eyes."""
     def track(self, frameBGR, gray):
-        if self.isTrackingFace:
-            self.isTrackingFace = self.trackFace(frameBGR)
+        #if self.isTrackingFace:
+        #    self.isTrackingFace = self.trackFace(frameBGR)
         if not self.isTrackingFace:
             self.isTrackingFace = self.detectFace(gray)
 
