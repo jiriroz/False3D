@@ -135,7 +135,7 @@ class EyeFaceTracker:
         self.maxEyeShift = 10.0
         #above this threshold any shift in eyes or face is rejected
         #it is two standard deviations above the observed mean
-        self.shiftThreshold = 10.0
+        self.shiftThreshold = 15.0
         #minimum face shift to search for eyes again
         self.minFaceShift = 1.0
         #termination criteria for meanshift
