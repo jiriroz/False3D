@@ -7,6 +7,16 @@ import sys
 from board import *
 from collections import deque
 
+"""
+To test eye tracking:
+python false3D.py --test [webCam number]
+
+To run:
+python false3D.py --run [webCam number]
+
+"""
+
+
 #TODO: Background subtraction.
 #TODO: Argparse
 
@@ -448,6 +458,12 @@ if __name__ == "__main__":
         camera = 0
     if mode == "--test":
         false3D = False3D(test=True)
+        false3D.run(camera)
     elif mode == "--run":
         false3D = False3D(test=False)
-    false3D.run(camera)
+        false3D.run(camera)
+    else:
+        print "Option not recognized. To test, run with"
+        print "python false3D.py --test [webcam number]"
+        print "To run, run"
+        print "python false3D.py --run [webcam number]"
