@@ -95,18 +95,8 @@ class EyeFaceTracker:
     property variables.
     """
     def __init__(self):
-        classifDir = "classifiers/"
-        facecasDefault = "haarcascade_frontalface_default.xml"
-        facecasAlt = "haarcascade_frontalface_alt.xml"
-        eyecasDefault = "haarcascade_eye.xml"
-        eyecasGlasses = "haarcascade_eye_tree_eyeglasses.xml"
-        facecas = classifDir + facecasDefault
-        eyecas = classifDir + eyecasGlasses
-        self.facePositionCascade = cv2.CascadeClassifier(facecas)
-        self.eyeCascade = cv2.CascadeClassifier(eyecas)
-        self.orb = cv2.ORB()
-        self.matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
-        self.isTrackingFace = True
+        self.initClassifiers()
+        self.isTrackingFace = False
         self.isTrackingEyes = False
         self.startedTracking = False
         self.oneEye = False
@@ -137,19 +127,36 @@ class EyeFaceTracker:
         self.shiftThreshold = 10.0
         #minimum face shift to search for eyes again
         self.minFaceShift = 1.0
-        #termination criteria for meanshift
-        self.maxIterations = 10
-        self.termCrit = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, self.maxIterations, 1)
+        self.frameShape = (480, 640)
+        #1 denotes background, 0 non-backgrond. Try probabilities?
+        self.background = np.zeros(self.frameShape)
 
     """Search for and track face and eyes."""
     def track(self, frameBGR, gray):
-        #if self.isTrackingFace:
-        #    self.isTrackingFace = self.trackFace(frameBGR)
+        self.processFrame(frameBGR, gray)
+
+        if self.isTrackingFace:
+            self.isTrackingFace = self.trackFace(frameBGR)
         if not self.isTrackingFace:
             self.isTrackingFace = self.detectFace(gray)
 
         if self.isTrackingFace:
             self.isTrackingEyes = self.trackEyes(gray)
+
+    def processFrame(self, frameBGR, gray):
+        self.backgroundSubtraction(frameBGR, gray)
+
+    """
+    Determine background by subtracting subsequent images.
+    Background is a pixel that hasn't changed for a specific number
+    of frames. Also consinder neighborhood.
+    First try with gray, then move to RGB.
+    """
+    def backgroundSubtraction(self, frameBGR, gray):
+        #np.subtract(a, b) where a and b have same dimensions or be broadcasted
+        pass
+        
+
 
     def detectFace(self, gray):
         ret, faces = self.searchForFaces(gray)
@@ -186,11 +193,11 @@ class EyeFaceTracker:
     @return boolean whether the eyes were successfully tracked
     """
     def trackEyes(self, gray):
-        if self.isTrackingEyes:
-            #do not redetect if the face hasn't moved
-            t = self.minFaceShift
-            if abs(self.xFaceShift) < t and abs(self.yFaceShift) < t:
-                return True
+        #if self.isTrackingEyes:
+        #    #do not redetect if the face hasn't moved
+        #    t = self.minFaceShift
+        #    if abs(self.xFaceShift) < t and abs(self.yFaceShift) < t:
+        #        return True
         (fx,fy,fw,fh) = self.facePosition
         eyes = self.searchForEyes(gray[fy:fy+fh, fx:fx+fw])
         if len(eyes) == 0 or (len(eyes) < 2 and not self.oneEye):
@@ -346,6 +353,26 @@ class EyeFaceTracker:
             self.distanceEyesSmooth.popleft()
             self.distanceEyesSmooth.append(diffDist)
             self.dDistanceEyes = sum([x for x in self.distanceEyesSmooth]) / self.smoothN
+
+    """
+    Initialize classifiers used for detection/tracking.
+    """
+    def initClassifiers(self):
+        classifDir = "classifiers/"
+        facecasDefault = "haarcascade_frontalface_default.xml"
+        facecasAlt = "haarcascade_frontalface_alt.xml"
+        eyecasDefault = "haarcascade_eye.xml"
+        eyecasGlasses = "haarcascade_eye_tree_eyeglasses.xml"
+        facecas = classifDir + facecasDefault
+        eyecas = classifDir + eyecasGlasses
+        self.facePositionCascade = cv2.CascadeClassifier(facecas)
+        self.eyeCascade = cv2.CascadeClassifier(eyecas)
+        self.orb = cv2.ORB()
+        self.matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
+        #termination criteria for meanshift
+        self.maxIterations = 10
+        self.termCrit = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, self.maxIterations, 1)
+
 
 """
 This class will display and rotate 3D projection of an image
