@@ -1,18 +1,18 @@
 #3D Chess Board written in Visual Python
 #Author: Shaun Press
-from visual import *
+import visual as vis
 
 class Board:
     'Class for chess board and pieces'
     def __init__(self):
-        self.frame = frame()
+        self.frame = vis.frame()
         'Builds board and places pieces'
         self.squares = []
         for i in range(64):
             self.squares.append(None)
         self.makeBoard()
         self.placePieces()
-        scene.center=(3.5,0,3.5)
+        vis.scene.center=(3.5,0,3.5)
 
     def addPiece(self,x,y,piece):
         self.squares[y*8+x] = piece
@@ -45,31 +45,31 @@ class Board:
         for i in range(8):
             for j in range(8):
                 if (i+j) % 2 == 1:
-                    sColor = color.blue
-                else: sColor = color.white
-                box(frame = self.frame, pos=(i,-0.1,j),length=1,height=0.1,width=1,color=sColor)
+                    sColor = vis.color.blue
+                else: sColor = vis.color.white
+                vis.box(frame = self.frame, pos=(i,-0.1,j),length=1,height=0.1,width=1,color=sColor)
 
     def placePieces(self):
         for i in range(8):
-            self.addPiece(i,1,Pawn((i,0,1),color.white , self.frame))
-            self.addPiece(i,6,Pawn((i,0,6),color.red, self.frame))
+            self.addPiece(i,1,Pawn((i,0,1),vis.color.white , self.frame))
+            self.addPiece(i,6,Pawn((i,0,6),vis.color.red, self.frame))
 
-        self.addPiece(0,0,Rook((0,0,0),color.white, self.frame))
-        self.addPiece(7,0,Rook((7,0,0),color.white, self.frame))
-        self.addPiece(0,7,Rook((0,0,7),color.red, self.frame))
-        self.addPiece(7,7,Rook((7,0,7),color.red, self.frame))
-        #self.addPiece(1,0,Knight((1,0,0),color.white, self.frame))
-        #self.addPiece(6,0,Knight((6,0,0),color.white, self.frame))
-        #self.addPiece(1,7,Knight((1,0,7),color.red, self.frame))
-        #self.addPiece(6,7,Knight((6,0,7),color.red, self.frame))
-        self.addPiece(2,0,Bishop((2,0,0),color.white, self.frame))
-        self.addPiece(5,0,Bishop((5,0,0),color.white, self.frame))
-        self.addPiece(2,7,Bishop((2,0,7),color.red, self.frame))
-        self.addPiece(5,7,Bishop((5,0,7),color.red, self.frame))
-        self.addPiece(4,0,Queen((4,0,0),color.white, self.frame))
-        self.addPiece(4,7,Queen((4,0,7),color.red, self.frame))
-        self.addPiece(3,0,King((3,0,0),color.white, self.frame))
-        self.addPiece(3,7,King((3,0,7),color.red, self.frame))
+        self.addPiece(0,0,Rook((0,0,0),vis.color.white, self.frame))
+        self.addPiece(7,0,Rook((7,0,0),vis.color.white, self.frame))
+        self.addPiece(0,7,Rook((0,0,7),vis.color.red, self.frame))
+        self.addPiece(7,7,Rook((7,0,7),vis.color.red, self.frame))
+        #self.addPiece(1,0,Knight((1,0,0),vis.color.white, self.frame))
+        #self.addPiece(6,0,Knight((6,0,0),vis.color.white, self.frame))
+        #self.addPiece(1,7,Knight((1,0,7),vis.color.red, self.frame))
+        #self.addPiece(6,7,Knight((6,0,7),vis.color.red, self.frame))
+        self.addPiece(2,0,Bishop((2,0,0),vis.color.white, self.frame))
+        self.addPiece(5,0,Bishop((5,0,0),vis.color.white, self.frame))
+        self.addPiece(2,7,Bishop((2,0,7),vis.color.red, self.frame))
+        self.addPiece(5,7,Bishop((5,0,7),vis.color.red, self.frame))
+        self.addPiece(4,0,Queen((4,0,0),vis.color.white, self.frame))
+        self.addPiece(4,7,Queen((4,0,7),vis.color.red, self.frame))
+        self.addPiece(3,0,King((3,0,0),vis.color.white, self.frame))
+        self.addPiece(3,7,King((3,0,7),vis.color.red, self.frame))
 
         
 class Piece:
@@ -93,34 +93,34 @@ class Piece:
             
 class Pawn(Piece):
     def __init__(self,spos,sColor, fr):
-        self.base = cone(frame=fr, pos=spos,radius=0.4,axis=(0,1,0),color=sColor)
+        self.base = vis.cone(frame=fr, pos=spos,radius=0.4,axis=(0,1,0),color=sColor)
 
 class Rook(Piece):
     def __init__(self,spos,sColor, fr):
-        self.base = cylinder(frame = fr, pos=spos,radius=0.4,length=1,axis=(0,1,0),color=sColor)
+        self.base = vis.cylinder(frame = fr, pos=spos,radius=0.4,length=1,axis=(0,1,0),color=sColor)
 
 class Knight(Piece):
     def __init__(self,spos,sColor, fr):
-        self.base = frame(frame = fr, sepos=spos)
-        box(frame=self.base,pos=(0,0.4,0),width=0.4,length=0.8,height=0.4,axis=(0,1,0),color=sColor)
-        cone(frame=self.base,pos=(0,0.6,0),radius=0.2,axis=(0,1,0),color=sColor)
+        self.base = vis.frame(frame = fr, sepos=spos)
+        vis.box(frame=self.base,pos=(0,0.4,0),width=0.4,length=0.8,height=0.4,axis=(0,1,0),color=sColor)
+        vis.cone(frame=self.base,pos=(0,0.6,0),radius=0.2,axis=(0,1,0),color=sColor)
 
 class Bishop(Piece):
     def __init__(self,spos,sColor, fr):
-        self.base = frame(pos=spos, frame=fr)
-        cylinder(frame=self.base,pos=(0,0,0),radius=0.2,length=0.8,axis=(0,1,0),color=sColor)
-        cone(frame=self.base,pos=(0,0.8,0),radius=0.2,axis=(0,1,0),color=sColor)
+        self.base = vis.frame(pos=spos, frame=fr)
+        vis.cylinder(frame=self.base,pos=(0,0,0),radius=0.2,length=0.8,axis=(0,1,0),color=sColor)
+        vis.cone(frame=self.base,pos=(0,0.8,0),radius=0.2,axis=(0,1,0),color=sColor)
 class Queen(Piece):
     def __init__(self,spos,sColor, fr):
-        self.base = frame(pos=spos, frame=fr)
-        cylinder(frame=self.base,pos=(0,0,0),radius=0.4,length=1.0,axis=(0,1,0),color=sColor)
-        sphere(frame=self.base,radius=0.4,pos=(0,1.4,0),color=sColor)
+        self.base = vis.frame(pos=spos, frame=fr)
+        vis.cylinder(frame=self.base,pos=(0,0,0),radius=0.4,length=1.0,axis=(0,1,0),color=sColor)
+        vis.sphere(frame=self.base,radius=0.4,pos=(0,1.4,0),color=sColor)
 
 class King(Piece):
     def __init__(self,spos,sColor, fr):
-        self.base = frame(pos=spos, frame=fr)
-        cylinder(frame=self.base,pos=(0,0,0),radius=0.4,length=1.2,axis=(0,1,0),color=sColor)
-        box(frame=self.base,height=0.6,width=0.6,length=0.6,pos=(0,1.5,0),color=sColor)
+        self.base = vis.frame(pos=spos, frame=fr)
+        vis.cylinder(frame=self.base,pos=(0,0,0),radius=0.4,length=1.2,axis=(0,1,0),color=sColor)
+        vis.box(frame=self.base,height=0.6,width=0.6,length=0.6,pos=(0,1.5,0),color=sColor)
 
 if __name__ == "__main__":            
     thisBoard = Board()

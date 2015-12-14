@@ -16,7 +16,6 @@ python false3D.py --run [webCam number]
 
 """
 
-#TODO: Background subtraction.
 #TODO: Argparse
 
 class False3D:
@@ -99,7 +98,6 @@ class EyeFaceTracker:
         self.isTrackingFace = False
         self.isTrackingEyes = False
         self.startedTracking = False
-        self.oneEye = False
         self.eyePositions = [(0,0,0,0), (0,0,0,0)]
         self.facePosition = (0,0,640,480)
         self.perspective = (0,0)
@@ -128,38 +126,75 @@ class EyeFaceTracker:
         #minimum face shift to search for eyes again
         self.minFaceShift = 1.0
         self.frameShape = (480, 640)
-        #1 denotes background, 0 non-backgrond. Try probabilities?
-        self.background = np.zeros(self.frameShape)
+        self.foreground = np.zeros(self.frameShape)
+        self.countBg = 0
 
     """Search for and track face and eyes."""
     def track(self, frameBGR, gray):
         self.processFrame(frameBGR, gray)
 
         if self.isTrackingFace:
-            self.isTrackingFace = self.trackFace(frameBGR)
+            self.isTrackingFace = self.trackFace()
         if not self.isTrackingFace:
-            self.isTrackingFace = self.detectFace(gray)
+            self.isTrackingFace = self.detectFace()
 
         if self.isTrackingFace:
-            self.isTrackingEyes = self.trackEyes(gray)
+            self.isTrackingEyes = self.trackEyes()
 
+    """
+    Process frame; determine background by subtracting subsequent images.
+    """
     def processFrame(self, frameBGR, gray):
-        self.backgroundSubtraction(frameBGR, gray)
+        self.countBg += 1
+        self.foreground = self.bgsub.apply(frameBGR)
+        self.foreground = cv2.medianBlur(self.foreground, 15)
+        ret, self.foreground = cv2.threshold(self.foreground, 126, 255, cv2.THRESH_BINARY)
+        kernel = np.ones((3,3), np.uint8)
+        self.foreground = cv2.dilate(self.foreground, kernel, iterations = 7)
+        contours, hierarchy = cv2.findContours(self.foreground, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+        print contours
+        #self.foreground = cv2.morphologyEx(self.foreground, cv2.MORPH_OPEN, self.kernel)
+        #self.foreground = cv2.GaussianBlur(self.foreground, (5, 5), 0)
+        #self.foreground = cv2.blur(self.foreground, (9,9))
 
-    """
-    Determine background by subtracting subsequent images.
-    Background is a pixel that hasn't changed for a specific number
-    of frames. Also consinder neighborhood.
-    First try with gray, then move to RGB.
-    """
-    def backgroundSubtraction(self, frameBGR, gray):
-        #np.subtract(a, b) where a and b have same dimensions or be broadcasted
-        pass
-        
+        #self.foreground = self.findfg(self.foreground)
+        cv2.imshow("fg", self.foreground)
+        self.bgsub = cv2.BackgroundSubtractorMOG2(history = 50, varThreshold = 16)
+        self.bgsub.apply(frameBGR)
+        #mask background
+        self.roiImgBGR = frameBGR
+        self.roiImgGray = gray
 
+    def findfg(self, fg):
+        minseq = 3
+        for i in range(len(fg)):
+            left = False
+            right = False
+            seqL = 0
+            seqR = 0
+            for j in range(len(fg[i])):
+                if seqL > minseq:
+                    left = True
+                if seqR > minseq:
+                    right = True
+                if left:
+                    fg[i][j] = 255
+                if right:
+                    fg[i][len(fg[i]) - j - 1] = 255
+                if fg[i][j] > 100:
+                    seqL += 1
+                else:
+                    seqL = 0
+                if fg[i][len(fg[i]) - j - 1] > 100:
+                    seqR += 1
+                else:
+                    seqR = 0
+                if j > len(fg[i]) / 2:
+                    break
+        return fg
 
-    def detectFace(self, gray):
-        ret, faces = self.searchForFaces(gray)
+    def detectFace(self):
+        ret, faces = self.searchForFaces(self.roiImgGray)
         if not ret:
             return False
         face = faces[0]
@@ -167,7 +202,7 @@ class EyeFaceTracker:
         return True
         
     """Track face using meanshift."""
-    def trackFace(self, frameBGR):
+    def trackFace(self):
         faceHsv = cv2.cvtColor(self.face, cv2.COLOR_BGR2HSV)
         mask = cv2.inRange(faceHsv, np.array((0., 60., 32.)), np.array((180.,255.,255.)))
         #dims: Components of HSV, histSizes: corresponding to HSV
@@ -176,7 +211,7 @@ class EyeFaceTracker:
         faceHist = cv2.GaussianBlur(faceHist, (13,13), 5)
         cv2.normalize(faceHist, faceHist, 0, 255, cv2.NORM_MINMAX)
 
-        frameHsv = cv2.cvtColor(frameBGR, cv2.COLOR_BGR2HSV)
+        frameHsv = cv2.cvtColor(self.roiImgBGR, cv2.COLOR_BGR2HSV)
         backProj = cv2.calcBackProject([frameHsv], dims, faceHist, ranges, 1)
         facePos = tuple(self.facePosition)
         ret, newFacePos = cv2.meanShift(backProj, facePos, self.termCrit)
@@ -188,27 +223,21 @@ class EyeFaceTracker:
 
     """
     Track eyes and update them.
-    @param frame BGR frame
-    @param gray frame in grayscale
     @return boolean whether the eyes were successfully tracked
     """
-    def trackEyes(self, gray):
-        #if self.isTrackingEyes:
-        #    #do not redetect if the face hasn't moved
-        #    t = self.minFaceShift
-        #    if abs(self.xFaceShift) < t and abs(self.yFaceShift) < t:
-        #        return True
+    def trackEyes(self):
+        if self.isTrackingEyes:
+            #do not redetect if the face hasn't moved
+            t = self.minFaceShift
+            if abs(self.xFaceShift) < t and abs(self.yFaceShift) < t:
+                return True
         (fx,fy,fw,fh) = self.facePosition
-        eyes = self.searchForEyes(gray[fy:fy+fh, fx:fx+fw])
-        if len(eyes) == 0 or (len(eyes) < 2 and not self.oneEye):
+        eyes = self.searchForEyes(self.roiImgGray[fy:fy+fh, fx:fx+fw])
+        if len(eyes) < 2:
             self.updateEyes(self.eyePositions, [], [0, 1])
             return False
         eyes = map(lambda (ex,ey,ew,eh):(ex+fx,ey+fy,ew,eh), eyes)
-        if len(eyes) == 1:
-            eyes, this, other = self.handleOneEye(eyes[0])
-            self.updateEyes(eyes, [this], [other])
-        else:
-            self.updateEyes(self.fixEyeOrder(eyes), [0, 1], [])
+        self.updateEyes(self.fixEyeOrder(eyes), [0, 1], [])
         return True
 
     """
@@ -249,21 +278,6 @@ class EyeFaceTracker:
         if not self.validateEyes(eyes[:2]):
             return []
         return eyes[:2]
-
-    """In case of only one eye detected, find out which one that was and
-    shift the other one by face shift.
-    @param: One eye, not known whether left or right
-    @return: Array of two eyes with the other one shifted."""
-    def handleOneEye(self, eye):
-        dxLeft = eye[0] - self.eyePositions[0][0]
-        dyLeft = eye[1] - self.eyePositions[0][1]
-        dxRight = eye[0] - self.eyePositions[1][0]
-        dyRight = eye[1] - self.eyePositions[1][1]
-        isLeft = (dxLeft**2 + dyLeft**2) < (dxRight**2 + dyRight**2)
-        if isLeft:
-            return [eye, self.eyePositions[1]], 0, 1
-        else:
-            return [self.eyePositions[0], eye], 1, 0
 
     def validateEyes(self, eyes):
         thres = self.shiftThreshold
@@ -372,6 +386,8 @@ class EyeFaceTracker:
         #termination criteria for meanshift
         self.maxIterations = 10
         self.termCrit = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, self.maxIterations, 1)
+        self.bgsub = cv2.BackgroundSubtractorMOG2(history=50, varThreshold=16)
+        self.kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(3,3))
 
 
 """
