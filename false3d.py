@@ -95,7 +95,7 @@ class EyeFaceTracker:
     """
     def __init__(self):
         self.initClassifiers()
-        self.isTrackingFace = False
+        self.isTrackingFace = True
         self.isTrackingEyes = False
         self.startedTracking = False
         self.eyePositions = [(0,0,0,0), (0,0,0,0)]
@@ -133,10 +133,10 @@ class EyeFaceTracker:
     def track(self, frameBGR, gray):
         self.processFrame(frameBGR, gray)
 
-        if self.isTrackingFace:
-            self.isTrackingFace = self.trackFace()
-        if not self.isTrackingFace:
-            self.isTrackingFace = self.detectFace()
+        #if self.isTrackingFace:
+        #    self.isTrackingFace = self.trackFace()
+        #if not self.isTrackingFace:
+        #    self.isTrackingFace = self.detectFace()
 
         if self.isTrackingFace:
             self.isTrackingEyes = self.trackEyes()
@@ -150,15 +150,19 @@ class EyeFaceTracker:
         self.foreground = cv2.medianBlur(self.foreground, 15)
         ret, self.foreground = cv2.threshold(self.foreground, 126, 255, cv2.THRESH_BINARY)
         kernel = np.ones((3,3), np.uint8)
+        self.foreground = cv2.resize(self.foreground, (320, 240))
         self.foreground = cv2.dilate(self.foreground, kernel, iterations = 7)
-        contours, hierarchy = cv2.findContours(self.foreground, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-        print contours
+        self.foreground = cv2.resize(self.foreground, (640, 480))
+        ret, self.foreground = cv2.threshold(self.foreground, 126, 255, cv2.THRESH_BINARY)
+        op = cv2.bitwise_and(self.foreground, gray)
+        #contours, hierarchy = cv2.findContours(self.foreground, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+        #print contours
         #self.foreground = cv2.morphologyEx(self.foreground, cv2.MORPH_OPEN, self.kernel)
         #self.foreground = cv2.GaussianBlur(self.foreground, (5, 5), 0)
         #self.foreground = cv2.blur(self.foreground, (9,9))
 
         #self.foreground = self.findfg(self.foreground)
-        cv2.imshow("fg", self.foreground)
+        cv2.imshow("fg", op)
         self.bgsub = cv2.BackgroundSubtractorMOG2(history = 50, varThreshold = 16)
         self.bgsub.apply(frameBGR)
         #mask background
@@ -226,11 +230,11 @@ class EyeFaceTracker:
     @return boolean whether the eyes were successfully tracked
     """
     def trackEyes(self):
-        if self.isTrackingEyes:
+        #if self.isTrackingEyes:
             #do not redetect if the face hasn't moved
-            t = self.minFaceShift
-            if abs(self.xFaceShift) < t and abs(self.yFaceShift) < t:
-                return True
+        #    t = self.minFaceShift
+        #    if abs(self.xFaceShift) < t and abs(self.yFaceShift) < t:
+        #        return True
         (fx,fy,fw,fh) = self.facePosition
         eyes = self.searchForEyes(self.roiImgGray[fy:fy+fh, fx:fx+fw])
         if len(eyes) < 2:
