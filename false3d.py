@@ -128,6 +128,7 @@ class EyeFaceTracker:
         self.frameShape = (480, 640)
         self.foreground = np.zeros(self.frameShape)
         self.countBg = 0
+        self.eyesTrackSequence = 0
 
     """Search for and track face and eyes."""
     def track(self, frameBGR, gray):
@@ -145,7 +146,7 @@ class EyeFaceTracker:
     Process frame; determine background by subtracting subsequent images.
     """
     def processFrame(self, frameBGR, gray):
-        self.countBg += 1
+        """self.countBg += 1
         self.foreground = self.bgsub.apply(frameBGR)
         self.foreground = cv2.medianBlur(self.foreground, 15)
         ret, self.foreground = cv2.threshold(self.foreground, 126, 255, cv2.THRESH_BINARY)
@@ -164,7 +165,7 @@ class EyeFaceTracker:
         #self.foreground = self.findfg(self.foreground)
         cv2.imshow("fg", op)
         self.bgsub = cv2.BackgroundSubtractorMOG2(history = 50, varThreshold = 16)
-        self.bgsub.apply(frameBGR)
+        self.bgsub.apply(frameBGR)"""
         #mask background
         self.roiImgBGR = frameBGR
         self.roiImgGray = gray
@@ -266,7 +267,7 @@ class EyeFaceTracker:
     Search for eyes using viola jones within the face.
     Exclude an upper and lower portion of the face.
     """
-    def searchForEyes(self, face, scaleF=1.2, minNeighbors=5):
+    def searchForEyes(self, face, scaleF=1.25, minNeighbors=5):
         height = face.shape[0]
         width = face.shape[1]
         top = height * self.topMargin
