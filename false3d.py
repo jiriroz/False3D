@@ -22,7 +22,6 @@ class False3D:
 
     def __init__(self, test, mode=0):
         self.isTestRun = test
-        self.displayEyeSearchRegion = False
         self.tracker = EyeFaceTracker()
         self.displayer = ObjectDisplayer(self.isTestRun, mode)
 
@@ -67,17 +66,8 @@ class False3D:
         cv2.imshow("Video", frame)
     
     def displayFeatures(self, frame):
-        (fx,fy,fw,fh) = self.tracker.facePosition
-        cv2.rectangle(frame, (fx,fy), (fx+fw,fy+fh), (255,0,0), 2)
-        if self.displayEyeSearchRegion:
-            topMargin = int(self.tracker.topMargin * fh)
-            bottomMargin = int((1-self.tracker.bottomMargin) * fh)
-            cv2.rectangle(frame, (fx,fy), (fx+fw, fy+topMargin), (255,0,0), -1)
-            cv2.rectangle(frame, (fx,fy+bottomMargin), (fx+fw, fy+fh), (255,0,0), -1)
-            leftMargin = int(self.tracker.leftMargin * fw)
-            rightMargin = int((1-self.tracker.rightMargin) * fw)
-            cv2.rectangle(frame, (fx,fy), (fx+leftMargin, fy+fh), (255,0,0), -1)
-            cv2.rectangle(frame, (fx+rightMargin,fy), (fx+fw, fy+fh), (255,0,0), -1)
+        (sx,sy,sw,sh) = self.tracker.eyeroi
+        cv2.rectangle(frame, (sx,sy), (sx+sw,sy+sh), (255,0,0), 2)
 
         (ex,ey,ew,eh) = self.tracker.eyePositions[0]
         cv2.rectangle(frame, (ex,ey), (ex+ew,ey+eh), (0,255,0), 2)
@@ -95,7 +85,7 @@ class EyeFaceTracker:
     """
     def __init__(self):
         self.initClassifiers()
-        self.isTrackingFace = True
+        self.isTrackingFace = False
         self.isTrackingEyes = False
         self.startedTracking = False
         self.eyePositions = [(0,0,0,0), (0,0,0,0)]
@@ -119,6 +109,7 @@ class EyeFaceTracker:
         self.eyes = [None, None]
         self.xFaceShift = 0
         self.yFaceShift = 0
+        self.eyeShift = [(0,0), (0,0)]
         self.maxEyeShift = 15.0
         #above this threshold any shift in eyes or face is rejected
         #it is two standard deviations above the observed mean
@@ -128,19 +119,24 @@ class EyeFaceTracker:
         self.frameShape = (480, 640)
         self.foreground = np.zeros(self.frameShape)
         self.countBg = 0
-        self.eyesTrackSequence = 0
+        self.successSequence = 0
+        self.failSequence = 0
+        self.minSuccessSequence = 1
+        self.minFailSequence = 4
+        self.eyeroi = (0,0,0,0)
 
     """Search for and track face and eyes."""
     def track(self, frameBGR, gray):
         self.processFrame(frameBGR, gray)
 
-        #if self.isTrackingFace:
-        #    self.isTrackingFace = self.trackFace()
-        #if not self.isTrackingFace:
-        #    self.isTrackingFace = self.detectFace()
-
-        if self.isTrackingFace:
-            self.isTrackingEyes = self.trackEyes()
+        self.isTrackingEyes = self.trackEyes()
+        if self.isTrackingEyes:
+            self.successSequence += 1
+            self.failSequence = 0
+        else:
+            self.failSequence += 1
+        if self.failSequence > self.minFailSequence:
+            self.successSequence = 0
 
     """
     Process frame; determine background by subtracting subsequent images.
@@ -162,41 +158,12 @@ class EyeFaceTracker:
         #self.foreground = cv2.GaussianBlur(self.foreground, (5, 5), 0)
         #self.foreground = cv2.blur(self.foreground, (9,9))
 
-        #self.foreground = self.findfg(self.foreground)
         cv2.imshow("fg", op)
         self.bgsub = cv2.BackgroundSubtractorMOG2(history = 50, varThreshold = 16)
         self.bgsub.apply(frameBGR)"""
         #mask background
         self.roiImgBGR = frameBGR
         self.roiImgGray = gray
-
-    def findfg(self, fg):
-        minseq = 3
-        for i in range(len(fg)):
-            left = False
-            right = False
-            seqL = 0
-            seqR = 0
-            for j in range(len(fg[i])):
-                if seqL > minseq:
-                    left = True
-                if seqR > minseq:
-                    right = True
-                if left:
-                    fg[i][j] = 255
-                if right:
-                    fg[i][len(fg[i]) - j - 1] = 255
-                if fg[i][j] > 100:
-                    seqL += 1
-                else:
-                    seqL = 0
-                if fg[i][len(fg[i]) - j - 1] > 100:
-                    seqR += 1
-                else:
-                    seqR = 0
-                if j > len(fg[i]) / 2:
-                    break
-        return fg
 
     def detectFace(self):
         ret, faces = self.searchForFaces(self.roiImgGray)
@@ -236,14 +203,37 @@ class EyeFaceTracker:
         #    t = self.minFaceShift
         #    if abs(self.xFaceShift) < t and abs(self.yFaceShift) < t:
         #        return True
-        (fx,fy,fw,fh) = self.facePosition
-        eyes = self.searchForEyes(self.roiImgGray[fy:fy+fh, fx:fx+fw])
+        if self.successSequence >= self.minSuccessSequence:
+            (x,y,w,h) = self.getEyeRoi()
+            scaleF = 1.20
+        else:
+            (x,y,w,h) = (0,0,self.frameShape[1],self.frameShape[0])
+            scaleF = 1.30
+        eyes = self.searchForEyes(self.roiImgGray[y:y+h, x:x+w], scaleF=scaleF)
         if len(eyes) < 2:
             self.updateEyes(self.eyePositions, [], [0, 1])
             return False
-        eyes = map(lambda (ex,ey,ew,eh):(ex+fx,ey+fy,ew,eh), eyes)
+        eyes = map(lambda (ex,ey,ew,eh):(ex+x,ey+y,ew,eh), eyes)
         self.updateEyes(self.fixEyeOrder(eyes), [0, 1], [])
         return True
+
+    """Get roi where we should search for eyes in the next frame.
+    Assume the eye at 0 position is the left one."""
+    def getEyeRoi(self):
+        lookAheadX = 3
+        lookAheadY = lookAheadX
+        dx = (self.eyeShift[0][0] + self.eyeShift[1][0])/2 * lookAheadX
+        dy = (self.eyeShift[0][1] + self.eyeShift[1][1])/2 * lookAheadY
+        xExtent = 100
+        yExtent = 70
+        lEye, rEye = self.eyePositions[0], self.eyePositions[1]
+        left = max(lEye[0] - xExtent, 0) + dx
+        right = min(rEye[0] + rEye[2] + xExtent, self.frameShape[1]) + dx
+        top = max(min(lEye[1], rEye[1]) - yExtent, 0) + dy
+        fooDown = max(lEye[1] + lEye[3], rEye[1] + rEye[3])
+        down = min(fooDown + yExtent, self.frameShape[0]) + dy
+        self.eyeroi = (left, top, right-left, down-top)
+        return (left, top, right-left, down-top)
 
     """
     Search for face using viola jones. Return boolean indicating
@@ -267,19 +257,19 @@ class EyeFaceTracker:
     Search for eyes using viola jones within the face.
     Exclude an upper and lower portion of the face.
     """
-    def searchForEyes(self, face, scaleF=1.25, minNeighbors=5):
-        height = face.shape[0]
-        width = face.shape[1]
-        top = height * self.topMargin
-        bottom = height * (1 - self.bottomMargin)
-        left = width * self.leftMargin
-        right = width * (1 - self.rightMargin)
-        faceRestricted = face[:bottom, :]
-        faceRestricted = faceRestricted[top:, :]
-        faceRestricted = faceRestricted[:, :right]
-        faceRestricted = faceRestricted[:, left:]
-        eyes = self.eyeCascade.detectMultiScale(faceRestricted, scaleF, minNeighbors)
-        eyes = map(lambda (ex,ey,ew,eh):(int(ex+left),int(ey+top),int(ew),int(eh)), eyes)
+    def searchForEyes(self, searchRoi, scaleF=1.25, minNeighbors=5):
+        height = searchRoi.shape[0]
+        width = searchRoi.shape[1]
+        #top = height * self.topMargin
+        #bottom = height * (1 - self.bottomMargin)
+        #left = width * self.leftMargin
+        #right = width * (1 - self.rightMargin)
+        #faceRestricted = face[:bottom, :]
+        #faceRestricted = faceRestricted[top:, :]
+        #faceRestricted = faceRestricted[:, :right]
+        #faceRestricted = faceRestricted[:, left:]
+        eyes = self.eyeCascade.detectMultiScale(searchRoi, scaleF, minNeighbors)
+        eyes = map(lambda (ex,ey,ew,eh):(int(ex),int(ey),int(ew),int(eh)), eyes)
         if not self.validateEyes(eyes[:2]):
             return []
         return eyes[:2]
@@ -310,10 +300,11 @@ class EyeFaceTracker:
     """
     def updateEyes(self, eyes, detected, notDetected):
         for i in notDetected:
-            eyes[i] = self.shiftEye(eyes[i])
+            eyes[i] = self.shiftEye(eyes[i], i)
         for i in detected:
             if not self.startedTracking:
                 continue
+            self.eyeShift[i] = self.computeEyeShift(eyes[i], i)
             (exOld,eyOld,ewOld,ehOld) = self.eyePositions[i]
             (exNew,eyNew,ewNew,ehNew) = eyes[i]
             dist = ((exOld - exNew)**2 + (eyOld - eyNew)**2)**0.5
@@ -323,8 +314,13 @@ class EyeFaceTracker:
             eyes[i] = [int(exOld + dex), int(eyOld + dey), ewNew, ehNew]
         self.eyePositions = eyes
 
-    def shiftEye(self, eye):
-        dx, dy = self.xFaceShift, self.yFaceShift
+    def computeEyeShift(self, eyeNew, index):
+        dx = eyeNew[0] - self.eyePositions[index][0]
+        dy = eyeNew[1] - self.eyePositions[index][1]
+        return (dx, dy)
+
+    def shiftEye(self, eye, index):
+        dx, dy = self.eyeShift[index][0], self.eyeShift[index][1]
         return [eye[0] + dx, eye[1] + dy, eye[2], eye[3]]
 
     def fixEyeOrder(self, eyes):
