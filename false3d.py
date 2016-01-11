@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
 import random
+import math
 import matplotlib.pyplot as plt
 import visual as vis
 import sys
@@ -16,7 +17,14 @@ python false3D.py --run [webCam number]
 
 """
 
-#TODO: Argparse
+#Ideas TODO:
+#Argparse
+#One eye tracking
+#Decrease variability of eyes' size
+#Change the size of the search region based on distance
+#Infer next position of the eyes
+#Verify eyes based on their relative position
+#Camshift instead of meanshift? Compare thoroughly
 
 class False3D:
 
@@ -139,29 +147,9 @@ class EyeFaceTracker:
             self.successSequence = 0
 
     """
-    Process frame; determine background by subtracting subsequent images.
+    Process frame.
     """
     def processFrame(self, frameBGR, gray):
-        """self.countBg += 1
-        self.foreground = self.bgsub.apply(frameBGR)
-        self.foreground = cv2.medianBlur(self.foreground, 15)
-        ret, self.foreground = cv2.threshold(self.foreground, 126, 255, cv2.THRESH_BINARY)
-        kernel = np.ones((3,3), np.uint8)
-        self.foreground = cv2.resize(self.foreground, (320, 240))
-        self.foreground = cv2.dilate(self.foreground, kernel, iterations = 7)
-        self.foreground = cv2.resize(self.foreground, (640, 480))
-        ret, self.foreground = cv2.threshold(self.foreground, 126, 255, cv2.THRESH_BINARY)
-        op = cv2.bitwise_and(self.foreground, gray)
-        #contours, hierarchy = cv2.findContours(self.foreground, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-        #print contours
-        #self.foreground = cv2.morphologyEx(self.foreground, cv2.MORPH_OPEN, self.kernel)
-        #self.foreground = cv2.GaussianBlur(self.foreground, (5, 5), 0)
-        #self.foreground = cv2.blur(self.foreground, (9,9))
-
-        cv2.imshow("fg", op)
-        self.bgsub = cv2.BackgroundSubtractorMOG2(history = 50, varThreshold = 16)
-        self.bgsub.apply(frameBGR)"""
-        #mask background
         self.roiImgBGR = frameBGR
         self.roiImgGray = gray
 
@@ -198,15 +186,12 @@ class EyeFaceTracker:
     @return boolean whether the eyes were successfully tracked
     """
     def trackEyes(self):
-        #if self.isTrackingEyes:
-            #do not redetect if the face hasn't moved
-        #    t = self.minFaceShift
-        #    if abs(self.xFaceShift) < t and abs(self.yFaceShift) < t:
-        #        return True
         if self.successSequence >= self.minSuccessSequence:
+            #If we've been tracking long enough, search around eyes.
             (x,y,w,h) = self.getEyeRoi()
             scaleF = 1.20
         else:
+            #If haven't been tracking long enough, search whole image.
             (x,y,w,h) = (0,0,self.frameShape[1],self.frameShape[0])
             scaleF = 1.30
         eyes = self.searchForEyes(self.roiImgGray[y:y+h, x:x+w], scaleF=scaleF)
@@ -220,18 +205,18 @@ class EyeFaceTracker:
     """Get roi where we should search for eyes in the next frame.
     Assume the eye at 0 position is the left one."""
     def getEyeRoi(self):
-        lookAheadX = 3
+        lookAheadX = 0
         lookAheadY = lookAheadX
         dx = (self.eyeShift[0][0] + self.eyeShift[1][0])/2 * lookAheadX
         dy = (self.eyeShift[0][1] + self.eyeShift[1][1])/2 * lookAheadY
         xExtent = 100
         yExtent = 70
         lEye, rEye = self.eyePositions[0], self.eyePositions[1]
-        left = max(lEye[0] - xExtent, 0) + dx
-        right = min(rEye[0] + rEye[2] + xExtent, self.frameShape[1]) + dx
-        top = max(min(lEye[1], rEye[1]) - yExtent, 0) + dy
+        left = max(lEye[0] - xExtent + dx, 0)
+        right = min(rEye[0] + rEye[2] + xExtent + dx, self.frameShape[1])
+        top = max(min(lEye[1], rEye[1]) - yExtent + dy, 0)
         fooDown = max(lEye[1] + lEye[3], rEye[1] + rEye[3])
-        down = min(fooDown + yExtent, self.frameShape[0]) + dy
+        down = min(fooDown + yExtent + dy, self.frameShape[0])
         self.eyeroi = (left, top, right-left, down-top)
         return (left, top, right-left, down-top)
 
@@ -260,14 +245,6 @@ class EyeFaceTracker:
     def searchForEyes(self, searchRoi, scaleF=1.25, minNeighbors=5):
         height = searchRoi.shape[0]
         width = searchRoi.shape[1]
-        #top = height * self.topMargin
-        #bottom = height * (1 - self.bottomMargin)
-        #left = width * self.leftMargin
-        #right = width * (1 - self.rightMargin)
-        #faceRestricted = face[:bottom, :]
-        #faceRestricted = faceRestricted[top:, :]
-        #faceRestricted = faceRestricted[:, :right]
-        #faceRestricted = faceRestricted[:, left:]
         eyes = self.eyeCascade.detectMultiScale(searchRoi, scaleF, minNeighbors)
         eyes = map(lambda (ex,ey,ew,eh):(int(ex),int(ey),int(ew),int(eh)), eyes)
         if not self.validateEyes(eyes[:2]):
@@ -307,8 +284,8 @@ class EyeFaceTracker:
             self.eyeShift[i] = self.computeEyeShift(eyes[i], i)
             (exOld,eyOld,ewOld,ehOld) = self.eyePositions[i]
             (exNew,eyNew,ewNew,ehNew) = eyes[i]
-            dist = ((exOld - exNew)**2 + (eyOld - eyNew)**2)**0.5
-            dist = dist/50
+            dist = self.hypotenuse(exOld - exNew, eyOld - eyNew)
+            dist = dist/10
             #make the eyes approach slower as they get closer
             dex, dey = self.setLength(exNew - exOld, eyNew - eyOld, self.maxEyeShift*dist)
             eyes[i] = [int(exOld + dex), int(eyOld + dey), ewNew, ehNew]
@@ -320,8 +297,9 @@ class EyeFaceTracker:
         return (dx, dy)
 
     def shiftEye(self, eye, index):
-        dx, dy = self.eyeShift[index][0], self.eyeShift[index][1]
-        return [eye[0] + dx, eye[1] + dy, eye[2], eye[3]]
+        #dx, dy = self.eyeShift[index][0], self.eyeShift[index][1]
+        #return [eye[0] + dx, eye[1] + dy, eye[2], eye[3]]
+        return eye
 
     def fixEyeOrder(self, eyes):
         (ex1,ey1,ew1,eh1) = eyes[0]
@@ -333,7 +311,7 @@ class EyeFaceTracker:
         return eyes
 
     def setLength(self, x, y, mag):
-        length = (x**2 + y**2)**0.5
+        length = self.hypotenuse(x, y)
         if length <= mag:
             return x, y
         alpha = length / mag
@@ -361,7 +339,7 @@ class EyeFaceTracker:
         x1, y1 = eye1[0] + eye1[2]/2, eye1[1] + eye1[3]/2
         x2, y2 = eye2[0] + eye2[2]/2, eye2[1] + eye2[3]/2
         self.perspective = (x1 + (x2-x1)/2, y1 + (y2-y1)/2)
-        distanceEyes = ((x1 - x2)**2 + (y1 - y2)**2) ** 0.5
+        distanceEyes = self.hypotenuse(x1 - x2, y1 - y2)
         diffDist = distanceEyes - self.distanceEyes
         self.distanceEyes = distanceEyes
         if self.startedTracking:
@@ -389,6 +367,10 @@ class EyeFaceTracker:
         self.termCrit = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, self.maxIterations, 1)
         self.bgsub = cv2.BackgroundSubtractorMOG2(history=50, varThreshold=16)
         self.kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(3,3))
+
+    """Compute hypotenuse in a right triangle given by legs x and y."""
+    def hypotenuse(self, x, y):
+        return math.sqrt(x*x + y*y)
 
 
 """
