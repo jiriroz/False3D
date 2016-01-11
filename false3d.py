@@ -21,7 +21,6 @@ python false3D.py --run [webCam number]
 #Argparse
 #One eye tracking
 #Decrease variability of eyes' size
-#Change the size of the search region based on distance
 #Infer next position of the eyes
 #Verify eyes based on their relative position
 #Camshift instead of meanshift? Compare thoroughly
@@ -203,14 +202,15 @@ class EyeFaceTracker:
         return True
 
     """Get roi where we should search for eyes in the next frame.
-    Assume the eye at 0 position is the left one."""
+    Assume eye at the 0th position is the left one."""
     def getEyeRoi(self):
+        scale = self.distanceEyes/140.0
         lookAheadX = 0
         lookAheadY = lookAheadX
         dx = (self.eyeShift[0][0] + self.eyeShift[1][0])/2 * lookAheadX
         dy = (self.eyeShift[0][1] + self.eyeShift[1][1])/2 * lookAheadY
-        xExtent = 100
-        yExtent = 70
+        xExtent = int(100 * scale)
+        yExtent = int(70 * scale)
         lEye, rEye = self.eyePositions[0], self.eyePositions[1]
         left = max(lEye[0] - xExtent + dx, 0)
         right = min(rEye[0] + rEye[2] + xExtent + dx, self.frameShape[1])
