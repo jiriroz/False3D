@@ -21,7 +21,6 @@ python false3D.py --run [webCam number]
 #Argparse
 #One eye tracking
 #Decrease variability of eyes' size
-#Verify eyes based on their relative position
 #Camshift instead of meanshift? Compare thoroughly
 #Incorporate back face tracking
 
@@ -82,6 +81,9 @@ class False3D:
         (ex,ey,ew,eh) = self.tracker.eyePositions[1]
         cv2.rectangle(frame, (ex,ey), (ex+ew,ey+eh), (0,0,255), 2)
         cv2.circle(frame, self.tracker.perspective, 5, (0,0,255), thickness=-1)
+        if self.tracker.FACE:
+            (fx,fy,fw,fh) = self.tracker.facePosition
+            cv2.rectangle(frame, (fx,fy), (fx+fw,fy+fh), (255,255,0), 2)
 
 """
 Class performing feature detection and tracking.
@@ -92,6 +94,7 @@ class EyeFaceTracker:
     property variables.
     """
     def __init__(self):
+        self.FACE = False #Face detection/tracking
         self.initClassifiers()
         h, w = 480, 640
         self.frameShape = (h, w)
@@ -137,20 +140,20 @@ class EyeFaceTracker:
         self.frameN = 0
         self.doNotSearch = False
         #Threshold by which two successive frames can differ
-        self.diffThreshold = 1.5
+        self.diffThreshold = 1.7
 
     """Search for and track face and eyes."""
     def track(self, frameBGR, gray):
         self.processFrame(frameBGR, gray)
-        #self.face()
+        if self.FACE:
+            self.face()
         self.eyes()
         self.doNotSearch = False
 
     """Process frame."""
     def processFrame(self, frameBGR, gray):
         diff = np.absolute(np.subtract(gray.astype(np.int16), self.roiImgGray))
-        avgDiff = np.sum(diff) / (640 * 480.0)
-        print avgDiff
+        avgDiff = float(np.sum(diff)) / (self.frameShape[0] * self.frameShape[1])
         self.doNotSearch = avgDiff < self.diffThreshold
 
         self.roiImgBGR = frameBGR
@@ -175,6 +178,8 @@ class EyeFaceTracker:
             self.successSequence = 0
 
     def detectFace(self):
+        if self.doNotSearch:
+            return self.isTrackingFace
         ret, faces = self.searchForFaces()
         if not ret:
             return False
@@ -207,6 +212,9 @@ class EyeFaceTracker:
     @return boolean whether the eyes were successfully tracked
     """
     def trackEyes(self):
+        if self.doNotSearch:
+            self.updateEyes(self.eyePositions, [], [0, 1])
+            return self.isTrackingEyes
         self.computeEyeRoi()
         (x,y,w,h) = self.eyeroi
         area = max(w * h, 1)
@@ -215,7 +223,11 @@ class EyeFaceTracker:
         if len(eyes) < 2:
             self.updateEyes(self.eyePositions, [], [0, 1])
             return False
-        self.updateEyes(self.fixEyeOrder(eyes), [0, 1], [])
+        eyes = self.fixEyeOrder(eyes)
+        if not self.validateEyes(eyes):
+            self.updateEyes(self.eyePositions, [], [0, 1])
+            return False
+        self.updateEyes(eyes, [0, 1], [])
         return True
 
     """Get roi where we should search for eyes in the next frame.
@@ -227,7 +239,6 @@ class EyeFaceTracker:
         elif not trackingEyes:
             #If haven't been tracking long enough, search whole image.
             (x,y,w,h) = (0,0,self.frameShape[1],self.frameShape[0])
-            #self.doNotSearch = self.frameN % 2 == 0
         else:
             #If we've been tracking long enough, search around eyes.
             scale = self.distanceEyes/140.0
@@ -251,8 +262,6 @@ class EyeFaceTracker:
     whether valid face found and the face.
     """
     def searchForFaces(self, scaleF=1.3, minNeighbors=5):
-        #if self.doNotSearch:
-        #    return self.isTrackingFace, self.facePosition
         roi = self.roiImgGray
         faces = self.facePositionCascade.detectMultiScale(roi, scaleF, minNeighbors)
         if len(faces) != 1:
@@ -271,19 +280,25 @@ class EyeFaceTracker:
     Search for eyes using viola jones within a prespecified roi.
     """
     def searchForEyes(self, scaleF=1.25, minNeighbors=5):
-        if self.doNotSearch:
-            return self.eyePositions
         (x,y,w,h) = self.eyeroi
         searchRoi = self.roiImgGray[y:y+h, x:x+w]
         height = searchRoi.shape[0]
         width = searchRoi.shape[1]
         eyes = self.eyeCascade.detectMultiScale(searchRoi, scaleF, minNeighbors)
         eyes = map(lambda (ex,ey,ew,eh):(int(ex+x),int(ey+y),int(ew),int(eh)), eyes)
-        if not self.validateEyes(eyes[:2]):
-            return []
         return eyes[:2]
 
     def validateEyes(self, eyes):
+        (xl, yl, wl, hl) = eyes[0]
+        (xr, yr, wr, hr) = eyes[1]
+        width = xr + wr - xl
+        if yl < yr:
+            height = yr + hr - yl
+        else:
+            height = yl + hl - yr
+        #Do they overlap?
+        if width < wl + wr and height < hl + hr:
+            return True
         thres = self.shiftThreshold
         for i in range(len(eyes)):
             area = eyes[i][2] * eyes[i][3]
@@ -388,8 +403,6 @@ class EyeFaceTracker:
         eyecas = classifDir + eyecasGlasses
         self.facePositionCascade = cv2.CascadeClassifier(facecas)
         self.eyeCascade = cv2.CascadeClassifier(eyecas)
-        self.orb = cv2.ORB()
-        self.matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
         #termination criteria for meanshift
         self.maxIterations = 10
         self.termCrit = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, self.maxIterations, 1)
