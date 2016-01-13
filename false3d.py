@@ -20,9 +20,7 @@ python false3D.py --run [webCam number]
 #Ideas TODO:
 #Argparse
 #One eye tracking
-#Decrease variability of eyes' size
 #Camshift instead of meanshift? Compare thoroughly
-#Incorporate back face tracking
 
 class False3D:
 
@@ -94,7 +92,7 @@ class EyeFaceTracker:
     property variables.
     """
     def __init__(self):
-        self.FACE = False #Face detection/tracking
+        self.FACE = True #Face detection/tracking
         self.initClassifiers()
         h, w = 480, 640
         self.frameShape = (h, w)
@@ -220,10 +218,7 @@ class EyeFaceTracker:
         (x,y,w,h) = self.eyeroi
         area = max(w * h, 1)
         scaleF = max(math.log(area) / 9, 1.01)
-        if not self.isTrackingEyes:
-            eyes = self.searchForEyes(scaleF=scaleF)
-        else:
-            eyes = self.searchForEyesMS()
+        eyes = self.searchForEyes(scaleF=scaleF)
         if len(eyes) < 2:
             self.updateEyes(self.eyePositions, [], [0, 1])
             return False
@@ -292,33 +287,6 @@ class EyeFaceTracker:
         eyes = map(lambda (ex,ey,ew,eh):(int(ex+x),int(ey+y),int(ew),int(eh)), eyes)
         return eyes[:2]
 
-    def searchForEyesMS(self):
-        (xl,yl,wl,hl), (xr,yr,wr,hr) = self.eyePositions[0], self.eyePositions[1]
-        lEye = self.previousFrame[yl:yl+hl, xl:xl+wl]
-        rEye = self.previousFrame[yr:yr+hr, xr:xr+wr]
-
-        retL, newLEyePos = self.trackOneEye((xl,yl,wl,hl), lEye)
-        retR, newREyePos = self.trackOneEye((xr,yr,wr,hr), rEye)
-        if not retL or not retR:
-            return []
-        return [newLEyePos, newREyePos]
-
-    def trackOneEye(self, eyePos, eye):
-        eyeHsv = cv2.cvtColor(eye, cv2.COLOR_BGR2HSV)
-        mask = cv2.inRange(eyeHsv, np.array((0., 60., 32.)), np.array((180.,255.,255.)))
-        #dims: Components of HSV, histSizes: corresponding to HSV
-        dims, histSizes, ranges = [0], [180], [0, 180]
-        eyeHist = cv2.calcHist([eyeHsv], dims, mask, histSizes, ranges)
-        eyeHist = cv2.GaussianBlur(eyeHist, (13,13), 5)
-        cv2.normalize(eyeHist, eyeHist, 0, 255, cv2.NORM_MINMAX)
-
-        frameHsv = cv2.cvtColor(self.roiImgBGR, cv2.COLOR_BGR2HSV)
-        backProj = cv2.calcBackProject([frameHsv], dims, eyeHist, ranges, 1)
-        eyePos = tuple(eyePos)
-        ret, newEyePos = cv2.meanShift(backProj, eyePos, self.termCrit)
-        return ret < self.maxIterations, newEyePos
-
-
     def validateEyes(self, eyes):
         (xl, yl, wl, hl) = eyes[0]
         (xr, yr, wr, hr) = eyes[1]
@@ -343,8 +311,9 @@ class EyeFaceTracker:
     them.
     """
     def updateEyes(self, eyes, detected, notDetected):
+        eyesInFace = self.areEyesWithinFace()
         for i in notDetected:
-            eyes[i] = self.shiftEye(eyes[i], i)
+            eyes[i] = self.shiftEye(eyes[i], i, eyesInFace)
         for i in detected:
             if not self.startedTracking:
                 continue
@@ -358,14 +327,28 @@ class EyeFaceTracker:
             eyes[i] = [int(exOld + dex), int(eyOld + dey), ewNew, ehNew]
         self.eyePositions = eyes
 
+    """Determine whether both eyes lie within the face"""
+    def areEyesWithinFace(self):
+        (xl, yl, wl, hl) = self.eyePositions[0]
+        (xr, yr, wr, hr) = self.eyePositions[1]
+        (fx, fy, fw, fh) = self.facePosition
+        centerLX, centerLY = xl + wl/2, yl + hl/2
+        centerRX, centerRY = xr + wr/2, yr + hr/2
+        leftX = centerLX > fx and centerLX < fx + fw
+        leftY = centerLY > fy and centerLY < fy + fh
+        rightX = centerRX > fx and centerRX < fx + fw
+        rightY = centerRY > fy and centerRY < fy + fh
+        return leftX and leftY and rightX and rightY
+
     def computeEyeShift(self, eyeNew, index):
         dx = eyeNew[0] - self.eyePositions[index][0]
         dy = eyeNew[1] - self.eyePositions[index][1]
         return (dx, dy)
 
-    def shiftEye(self, eye, index):
-        #dx, dy = self.eyeShift[index][0], self.eyeShift[index][1]
-        #return [eye[0] + dx, eye[1] + dy, eye[2], eye[3]]
+    def shiftEye(self, eye, index, eyesWithinFace):
+        if eyesWithinFace:
+            dx, dy = self.xFaceShift, self.yFaceShift
+            return [eye[0] + dx, eye[1] + dy, eye[2], eye[3]]
         return eye
 
     def fixEyeOrder(self, eyes):
