@@ -19,8 +19,6 @@ python false3D.py --run [webCam number]
 
 #Ideas TODO:
 #Argparse
-#One eye tracking
-#Camshift instead of meanshift? Compare thoroughly
 
 class False3D:
 
@@ -164,6 +162,8 @@ class EyeFaceTracker:
             self.isTrackingFace = self.detectFace()
         else:
             self.isTrackingFace = self.trackFace()
+        if not self.isTrackingFace:
+            self.loseFace()
 
     """Handle all eye stuff."""
     def eyes(self):
@@ -351,6 +351,7 @@ class EyeFaceTracker:
             return [eye[0] + dx, eye[1] + dy, eye[2], eye[3]]
         return eye
 
+    """Fix eye order so that the left eye appears first in the tuple."""
     def fixEyeOrder(self, eyes):
         (ex1,ey1,ew1,eh1) = eyes[0]
         (ex2,ey2,ew2,eh2) = eyes[1]
@@ -360,12 +361,9 @@ class EyeFaceTracker:
              eyes[0] = temp
         return eyes
 
-    def setLength(self, x, y, mag):
-        length = self.hypotenuse(x, y)
-        if length <= mag:
-            return x, y
-        alpha = length / mag
-        return x/alpha, y/alpha
+    """When we lose a face, reset tracking variables."""
+    def loseFace(self):
+        self.xFaceShift, self.yFaceShift = 0, 0
 
     """
     Store the detected features so that we can access them
@@ -407,7 +405,7 @@ class EyeFaceTracker:
         self.facePositionCascade = cv2.CascadeClassifier(facecas)
         self.eyeCascade = cv2.CascadeClassifier(eyecas)
         #termination criteria for meanshift
-        self.maxIterations = 10
+        self.maxIterations = 7
         self.termCrit = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, self.maxIterations, 1)
         self.bgsub = cv2.BackgroundSubtractorMOG2(history=50, varThreshold=16)
         self.kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(3,3))
@@ -415,6 +413,14 @@ class EyeFaceTracker:
     """Compute hypotenuse in a right triangle given by legs x and y."""
     def hypotenuse(self, x, y):
         return math.sqrt(x*x + y*y)
+
+    """Set length of a vector."""
+    def setLength(self, x, y, mag):
+        length = self.hypotenuse(x, y)
+        if length <= mag:
+            return x, y
+        alpha = length / mag
+        return x/alpha, y/alpha
 
 
 """
