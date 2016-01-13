@@ -149,6 +149,7 @@ class EyeFaceTracker:
             self.face()
         self.eyes()
         self.doNotSearch = False
+        self.previousFrame = self.roiImgBGR
 
     """Process frame."""
     def processFrame(self, frameBGR, gray):
@@ -219,7 +220,10 @@ class EyeFaceTracker:
         (x,y,w,h) = self.eyeroi
         area = max(w * h, 1)
         scaleF = max(math.log(area) / 9, 1.01)
-        eyes = self.searchForEyes(scaleF=scaleF)
+        if not self.isTrackingEyes:
+            eyes = self.searchForEyes(scaleF=scaleF)
+        else:
+            eyes = self.searchForEyesMS()
         if len(eyes) < 2:
             self.updateEyes(self.eyePositions, [], [0, 1])
             return False
@@ -287,6 +291,33 @@ class EyeFaceTracker:
         eyes = self.eyeCascade.detectMultiScale(searchRoi, scaleF, minNeighbors)
         eyes = map(lambda (ex,ey,ew,eh):(int(ex+x),int(ey+y),int(ew),int(eh)), eyes)
         return eyes[:2]
+
+    def searchForEyesMS(self):
+        (xl,yl,wl,hl), (xr,yr,wr,hr) = self.eyePositions[0], self.eyePositions[1]
+        lEye = self.previousFrame[yl:yl+hl, xl:xl+wl]
+        rEye = self.previousFrame[yr:yr+hr, xr:xr+wr]
+
+        retL, newLEyePos = self.trackOneEye((xl,yl,wl,hl), lEye)
+        retR, newREyePos = self.trackOneEye((xr,yr,wr,hr), rEye)
+        if not retL or not retR:
+            return []
+        return [newLEyePos, newREyePos]
+
+    def trackOneEye(self, eyePos, eye):
+        eyeHsv = cv2.cvtColor(eye, cv2.COLOR_BGR2HSV)
+        mask = cv2.inRange(eyeHsv, np.array((0., 60., 32.)), np.array((180.,255.,255.)))
+        #dims: Components of HSV, histSizes: corresponding to HSV
+        dims, histSizes, ranges = [0], [180], [0, 180]
+        eyeHist = cv2.calcHist([eyeHsv], dims, mask, histSizes, ranges)
+        eyeHist = cv2.GaussianBlur(eyeHist, (13,13), 5)
+        cv2.normalize(eyeHist, eyeHist, 0, 255, cv2.NORM_MINMAX)
+
+        frameHsv = cv2.cvtColor(self.roiImgBGR, cv2.COLOR_BGR2HSV)
+        backProj = cv2.calcBackProject([frameHsv], dims, eyeHist, ranges, 1)
+        eyePos = tuple(eyePos)
+        ret, newEyePos = cv2.meanShift(backProj, eyePos, self.termCrit)
+        return ret < self.maxIterations, newEyePos
+
 
     def validateEyes(self, eyes):
         (xl, yl, wl, hl) = eyes[0]
