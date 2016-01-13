@@ -297,18 +297,7 @@ class EyeFaceTracker:
         else:
             height = yl + hl - yr
         #Do they overlap?
-        if width < wl + wr and height < hl + hr:
-            return True
-        thres = self.shiftThreshold
-        for i in range(len(eyes)):
-            area = eyes[i][2] * eyes[i][3]
-            dx = (eyes[i][0] - self.eyePositions[i][0])
-            dy = (eyes[i][1] - self.eyePositions[i][1])
-            shiftCheck = abs(dx) < thres and abs(dy) < thres
-            areaCheck = area > 800 and area < 6000
-            if not (shiftCheck or areaCheck):
-                return False
-        return True
+        return not (width < wl + wr and height < hl + hr)
 
     """
     Store the current position of the face and the shift.
