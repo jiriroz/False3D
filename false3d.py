@@ -76,7 +76,7 @@ class False3D:
         cv2.rectangle(frame, (ex,ey), (ex+ew,ey+eh), (0,255,0), 2)
         (ex,ey,ew,eh) = self.tracker.eyePositions[1]
         cv2.rectangle(frame, (ex,ey), (ex+ew,ey+eh), (0,0,255), 2)
-        cv2.circle(frame, self.tracker.perspective, 5, (0,0,255), thickness=-1)
+        cv2.circle(frame, self.tracker.perspective, 5, (0,255,255), thickness=-1)
         if self.tracker.FACE:
             (fx,fy,fw,fh) = self.tracker.facePosition
             cv2.rectangle(frame, (fx,fy), (fx+fw,fy+fh), (255,255,0), 2)

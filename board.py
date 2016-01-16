@@ -1,5 +1,9 @@
-#3D Chess Board written in Visual Python
-#Author: Shaun Press
+"""
+This class is only used for visualization of False 3D.
+3D Chess Board written in Visual Python
+Author: Shaun Press
+"""
+
 import visual as vis
 
 class Board:
